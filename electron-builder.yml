@@ -1,0 +1,31 @@
+appId: com.snagori.train-menu
+productName: Train Menu
+
+directories:
+  output: release
+
+# Explicit list: the app is plain source, so without this the tests, the icon
+# generator, and the lockfile would all ship inside the bundle. src/ is the whole
+# runtime, so everything shippable is in one glob now.
+files:
+  - src/**/*
+  - package.json
+  - assets/tray/*.png
+
+asar: true
+
+mac:
+  category: public.app-category.travel
+  # Generated from the tray letterform by `pnpm icon`.
+  icon: assets/app-icon.icns
+  target:
+    - target: dir
+      arch: arm64
+  # Menu-bar only: no Dock tile, no app-switcher entry, and no Dock flash at
+  # launch the way app.dock.hide() alone would give.
+  extendInfo:
+    LSUIElement: true
+  # Ad-hoc signed by scripts/adhoc-sign-mac-app.mjs after packaging. Notarizing
+  # would need a paid Developer ID; recipients clear quarantine once instead.
+  identity: null
+  gatekeeperAssess: false

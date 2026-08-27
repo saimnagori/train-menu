@@ -1,0 +1,1410 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'none'; style-src 'self' 'unsafe-inline'; script-src 'unsafe-inline'"
+    />
+    <title>Train Menu</title>
+    <link rel="stylesheet" href="tokens.css" />
+    <style>
+      /* Monochrome Lab. Tokens come from tokens.css - no hardcoded colours here
+         except the WMATA line hues, which are agency data, not brand colour. */
+      body {
+        background: var(--bg-stage);
+        border-radius: var(--radius-xl);
+        overflow: hidden;
+        user-select: none;
+      }
+
+      /* --- Head: mark + ASCII/SVG controls --- */
+      header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: var(--space-5);
+        padding: var(--space-5) var(--space-6);
+        border-bottom: 1px solid var(--line);
+        -webkit-app-region: drag;
+      }
+      .mark {
+        font-size: var(--fs-xxs);
+        letter-spacing: 0.22em;
+        text-transform: uppercase;
+        color: var(--ink-200);
+      }
+      .mark .sep {
+        color: var(--signal);
+      }
+      .controls {
+        display: flex;
+        align-items: center;
+        gap: var(--space-5);
+        -webkit-app-region: no-drag;
+      }
+      .icon {
+        display: grid;
+        place-items: center;
+        width: 20px;
+        height: 20px;
+        padding: 0;
+        appearance: none;
+        background: transparent;
+        border: 0;
+        border-radius: var(--radius-sm);
+        color: var(--ink-400);
+        cursor: pointer;
+        transition: color var(--motion-base) var(--ease);
+      }
+      .icon:hover {
+        color: var(--ink-100);
+      }
+      .icon svg {
+        width: 14px;
+        height: 14px;
+        stroke: currentColor;
+        stroke-width: 1.6;
+        fill: none;
+        stroke-linecap: round;
+        stroke-linejoin: round;
+      }
+
+      main {
+        padding: var(--space-6);
+      }
+
+      /* --- Hero: next departure --- */
+      .hero {
+        display: flex;
+        align-items: baseline;
+        gap: var(--space-4);
+      }
+      .hero .value {
+        font-size: var(--fs-3xl);
+      }
+      .hero .toward {
+        font-size: var(--fs-xs);
+        color: var(--ink-400);
+        margin-left: auto;
+        text-align: right;
+      }
+      /* RailTime is a scheduled average, so the clock keeps its tilde and is
+         never styled as precise. */
+      .hero .clock {
+        color: var(--ink-200);
+        font-variant-numeric: tabular-nums;
+      }
+      .route {
+        margin-top: var(--space-3);
+        font-size: var(--fs-xxs);
+        letter-spacing: var(--tracking-caps);
+        text-transform: uppercase;
+        color: var(--ink-500);
+      }
+
+      /* --- The minute ruler ---
+         Your trains above the axis, every other train at the platform below it,
+         each at the Min the feed gave. The axis ends at the last train named and
+         the scale labels carry that, so there is no horizon to explain. */
+      .ruler {
+        margin-top: var(--space-6);
+      }
+      .track {
+        position: relative;
+        /* Tall enough that the below-line labels clear the scale row. */
+        height: 74px;
+      }
+      /* Only when two trains below the line share a minute and one label has to
+         drop a row - the extra height is not paid for the usual board. */
+      .track.deep {
+        height: 96px;
+      }
+      .track .axis {
+        position: absolute;
+        left: 0;
+        right: 0;
+        top: 40px;
+        height: 1px;
+        background: var(--line);
+      }
+      .track .tick {
+        position: absolute;
+        top: 35px;
+        width: 1px;
+        height: 11px;
+        background: var(--ink-800);
+      }
+      .pin {
+        position: absolute;
+        transform: translateX(-50%);
+        text-align: center;
+      }
+      .pin.mine {
+        top: 14px;
+      }
+      /* Two trains a few minutes apart would collide - every other label lifts a
+         row while its stem still lands on the true minute. */
+      .pin.mine.lift {
+        top: 0;
+      }
+      .pin.mine.lift .stem {
+        height: 26px;
+      }
+      .pin.mine .lab {
+        font-size: var(--fs-xs);
+        font-variant-numeric: tabular-nums;
+        line-height: 1.1;
+        color: var(--ink-100);
+      }
+      .pin.mine .sub {
+        font-size: 0.625rem;
+        color: var(--ink-500);
+      }
+      .pin.mine .stem {
+        width: 1px;
+        height: 12px;
+        margin: 0 auto;
+        background: var(--signal);
+        box-shadow: var(--signal-glow);
+      }
+      .pin.other {
+        top: 43px;
+      }
+      .pin.other .stem {
+        width: 1px;
+        height: 8px;
+        margin: 0 auto;
+        background: var(--ink-700);
+      }
+      /* The mirror of the lift above the line: the stem grows, so the label drops
+         a row while the mark still lands on its true minute. */
+      .pin.other.lift .stem {
+        height: 30px;
+      }
+      .pin.other .lab {
+        font-size: 0.625rem;
+        line-height: 1.4;
+        color: var(--ink-600);
+      }
+      /* BRD and ARR are not minutes: they take the left edge and are named as
+         themselves, tinted as the one signal colour. */
+      .pin .lab.now {
+        color: var(--signal);
+      }
+      .scale {
+        display: flex;
+        justify-content: space-between;
+        margin-top: var(--space-2);
+        font-size: 0.625rem;
+        letter-spacing: 0.1em;
+        color: var(--ink-600);
+      }
+
+      /* --- The station list ---
+         Minutes, line, destination. The stamp is the freshness proof: a frozen
+         feed shows as an old clock rather than a countdown ticking over stale
+         numbers. */
+      .feed {
+        margin-top: var(--space-6);
+        padding-top: var(--space-5);
+        border-top: 1px solid var(--line-faint);
+      }
+      .feedhead {
+        display: flex;
+        align-items: center;
+        gap: var(--space-3);
+        margin-bottom: var(--space-4);
+        font-size: 0.625rem;
+        letter-spacing: 0.12em;
+        text-transform: uppercase;
+        color: var(--ink-600);
+      }
+      .feedhead .live {
+        width: 5px;
+        height: 5px;
+        border-radius: 50%;
+        background: var(--signal);
+        box-shadow: var(--signal-glow);
+      }
+      .feedhead .stamp {
+        margin-left: auto;
+        letter-spacing: 0.06em;
+        font-variant-numeric: tabular-nums;
+      }
+      table.feedtable {
+        width: 100%;
+        border-collapse: collapse;
+        font-size: var(--fs-xs);
+        font-variant-numeric: tabular-nums;
+      }
+      table.feedtable td {
+        padding: var(--space-2) 0;
+        color: var(--ink-300);
+      }
+      table.feedtable .c-min {
+        width: 4ch;
+        color: var(--ink-100);
+      }
+      table.feedtable .c-ln {
+        width: 4ch;
+        color: var(--ink-500);
+      }
+      table.feedtable tr.dim td {
+        color: var(--ink-600);
+      }
+      table.feedtable tr.dim .c-min {
+        color: var(--ink-500);
+      }
+      table.feedtable tr.group td {
+        padding-top: var(--space-4);
+        font-size: 0.625rem;
+        letter-spacing: 0.12em;
+        text-transform: uppercase;
+        /* The faintest TEXT step, not ink-700: that is a divider token, and this
+           label reading it at 12% white made it the hardest thing on the board.
+           Text belongs on the text scale, which is also the only scale the
+           brightness setting moves. */
+        color: var(--ink-600);
+      }
+
+      /* --- Alerts ---
+         Severity is deliberately flat: on live records DelaySeverity is null and
+         PassengerDelay is 0, so a colour ladder would be invented, not reported. */
+      .watch {
+        display: flex;
+        align-items: center;
+        gap: var(--space-3);
+        margin-top: var(--space-6);
+        padding-top: var(--space-5);
+        border-top: 1px solid var(--line-faint);
+        font-size: 0.625rem;
+        letter-spacing: 0.12em;
+        text-transform: uppercase;
+        color: var(--ink-600);
+      }
+      .watch .chips {
+        display: flex;
+        gap: var(--space-3);
+      }
+      .chip {
+        padding: 2px var(--space-3);
+        border: 1px solid var(--line);
+        border-radius: var(--radius-xs);
+        letter-spacing: 0.06em;
+        color: var(--ink-400);
+      }
+      .when {
+        margin-left: auto;
+        letter-spacing: 0.06em;
+        font-variant-numeric: tabular-nums;
+      }
+      .alert {
+        margin-top: var(--space-4);
+        padding: var(--space-5);
+        border: 1px solid rgba(255, 216, 107, 0.22);
+        border-left: 2px solid var(--signal-warn);
+        border-radius: var(--radius-xs);
+        background: rgba(255, 216, 107, 0.05);
+      }
+      .alert .top {
+        display: flex;
+        align-items: center;
+        gap: var(--space-3);
+        margin-bottom: var(--space-3);
+        font-size: 0.625rem;
+        letter-spacing: 0.12em;
+        text-transform: uppercase;
+        color: var(--ink-500);
+      }
+      .alert .top .adot {
+        width: 5px;
+        height: 5px;
+        border-radius: 50%;
+        background: var(--signal-warn);
+      }
+      .alert .top .age {
+        margin-left: auto;
+        letter-spacing: 0.06em;
+        color: var(--ink-600);
+      }
+      /* Descriptions run past 300 characters, so clamp on a line boundary and
+         keep an expand affordance rather than cutting mid-fact. */
+      .alert .body {
+        font-size: var(--fs-xs);
+        line-height: 1.5;
+        color: var(--ink-300);
+        display: -webkit-box;
+        -webkit-line-clamp: 3;
+        -webkit-box-orient: vertical;
+        overflow: hidden;
+      }
+      .alert.open .body {
+        -webkit-line-clamp: none;
+      }
+      .alert .more {
+        display: inline-block;
+        margin-top: var(--space-3);
+        font-size: 0.625rem;
+        letter-spacing: 0.1em;
+        text-transform: uppercase;
+        color: var(--ink-500);
+        border-bottom: 1px solid var(--line);
+        padding-bottom: 1px;
+        cursor: pointer;
+      }
+      .clear {
+        display: flex;
+        align-items: center;
+        gap: var(--space-4);
+        margin-top: var(--space-4);
+        font-size: var(--fs-xs);
+        color: var(--ink-500);
+      }
+      .clear .ok {
+        color: var(--signal);
+      }
+      .clear .when {
+        font-size: 0.625rem;
+        color: var(--ink-600);
+      }
+
+      /* --- Station picker rows (setup) --- */
+      ul {
+        list-style: none;
+        margin: var(--space-6) 0 0;
+        padding: 0;
+        border-top: 1px dashed var(--line-faint);
+      }
+      li {
+        display: flex;
+        align-items: center;
+        gap: var(--space-4);
+        padding: var(--space-4) 0;
+        border-bottom: 1px dashed var(--line-faint);
+        font-size: var(--fs-sm);
+      }
+      li:last-child {
+        border-bottom: 0;
+      }
+      .dot {
+        flex: 0 0 auto;
+        width: 6px;
+        height: 6px;
+        border-radius: 50%;
+        background: var(--ink-600);
+      }
+      /* Real WMATA line colours - agency data. */
+      .dot[data-color="red"] { background: #bf0d3e; }
+      .dot[data-color="orange"] { background: #ed8b00; }
+      .dot[data-color="blue"] { background: #009cde; }
+      .dot[data-color="green"] { background: #00b140; }
+      .dot[data-color="yellow"] { background: #ffd100; }
+      .dot[data-color="silver"] { background: #919d9d; }
+      .code {
+        flex: 0 0 auto;
+        width: 2ch;
+        font-size: var(--fs-xxs);
+        letter-spacing: 0.06em;
+        color: var(--ink-500);
+      }
+      /* --- Empty / setup state --- */
+      h1 {
+        font-size: 1.75rem;
+        font-weight: var(--weight-light);
+        letter-spacing: var(--tracking-value);
+        color: var(--ink-100);
+      }
+      .lede {
+        margin-top: var(--space-4);
+        font-size: var(--fs-sm);
+        color: var(--ink-400);
+      }
+      form {
+        margin-top: var(--space-7);
+      }
+      label {
+        display: block;
+        margin-bottom: var(--space-5);
+      }
+      .field {
+        display: flex;
+        align-items: center;
+        gap: var(--space-4);
+        margin-top: var(--space-3);
+        padding: var(--space-4) var(--space-5);
+        background: transparent;
+        border: 1px solid var(--line);
+        border-radius: var(--radius-md);
+        transition: border-color var(--motion-base) var(--ease);
+      }
+      .field:hover,
+      .field:focus-within {
+        border-color: var(--ink-600);
+      }
+      .field .prompt {
+        color: var(--signal);
+        font-size: var(--fs-sm);
+      }
+      input {
+        flex: 1;
+        min-width: 0;
+        appearance: none;
+        background: transparent;
+        border: 0;
+        padding: 0;
+        font-family: var(--font-mono);
+        font-size: var(--fs-sm);
+        color: var(--ink-100);
+        caret-color: var(--signal);
+        user-select: text;
+      }
+      input:focus,
+      input:focus-visible {
+        outline: none;
+        box-shadow: none;
+      }
+      input::placeholder {
+        color: var(--ink-faint);
+      }
+
+      /* --- Brightness slider ---
+         A 1px hairline track with a mint dot for a thumb and a 1px mint fill
+         behind it: the same vocabulary as the rest of the surface, no new colour
+         and no new shape. --fill is set by the renderer as the value changes. */
+      input[type="range"] {
+        flex: 1;
+        min-width: 0;
+        appearance: none;
+        -webkit-appearance: none;
+        height: 12px;
+        background: transparent;
+        cursor: pointer;
+      }
+      input[type="range"]::-webkit-slider-runnable-track {
+        height: 1px;
+        /* Two hard stops, so this is a mint fill up to the thumb and a hairline
+           after it - not a gradient. */
+        background: linear-gradient(
+          to right,
+          var(--signal) 0 var(--fill, 0%),
+          var(--ink-700) var(--fill, 0%) 100%
+        );
+      }
+      input[type="range"]::-webkit-slider-thumb {
+        appearance: none;
+        -webkit-appearance: none;
+        width: 7px;
+        height: 7px;
+        margin-top: -3px;
+        border: 0;
+        border-radius: 50%;
+        background: var(--signal);
+        box-shadow: var(--signal-glow);
+      }
+      .field.range .unit {
+        flex: 0 0 auto;
+        width: 4ch;
+        text-align: right;
+        font-size: var(--fs-xxs);
+        font-variant-numeric: tabular-nums;
+        color: var(--ink-400);
+      }
+
+      /* --- Menu bar style picker ---
+         Three rows rather than a segmented strip: each style needs a line of
+         explanation, and the menu bar itself is the real preview. */
+      .styles {
+        margin-top: var(--space-3);
+        display: grid;
+        gap: var(--space-2);
+      }
+      .style {
+        display: flex;
+        align-items: baseline;
+        gap: var(--space-4);
+        width: 100%;
+        padding: var(--space-3) var(--space-5);
+        background: transparent;
+        border: 1px solid var(--line);
+        border-radius: var(--radius-md);
+        text-align: left;
+        color: var(--ink-400);
+        cursor: pointer;
+        transition:
+          border-color var(--motion-base) var(--ease),
+          color var(--motion-base) var(--ease);
+      }
+      .style:hover {
+        border-color: var(--ink-600);
+        color: var(--ink-100);
+      }
+      .style[aria-checked="true"] {
+        border-color: var(--signal);
+        background: var(--bg-pressed);
+        color: var(--ink-100);
+      }
+      .style .name {
+        flex: 0 0 auto;
+        font-family: var(--font-mono);
+        font-size: var(--fs-sm);
+      }
+      .style .note {
+        flex: 1;
+        min-width: 0;
+        font-size: var(--fs-xxs);
+        letter-spacing: var(--tracking-caps);
+        text-transform: uppercase;
+        color: var(--ink-600);
+        text-align: right;
+      }
+
+      /* --- Station combobox ---
+         The native datalist dropdown was the one surface on this popover that
+         macOS drew, and it looked like it. These rows are ours: same tokens as
+         everything else, and the line bullets come along for free. */
+      .combo {
+        position: relative;
+      }
+      .combo .caret {
+        flex: 0 0 auto;
+        font-size: 11px;
+        line-height: 1;
+        color: var(--ink-500);
+      }
+      .combo-panel {
+        position: absolute;
+        left: 0;
+        right: 0;
+        top: calc(100% + var(--space-2));
+        z-index: 5;
+        overflow: hidden;
+        background: var(--bg-surface);
+        border: 1px solid var(--line);
+        border-radius: var(--radius-md);
+        box-shadow: 0 16px 40px rgba(0, 0, 0, 0.6);
+      }
+      .rows {
+        list-style: none;
+        margin: 0;
+        padding: 0;
+        max-height: 168px;
+        overflow-y: auto;
+      }
+      .rows li {
+        display: flex;
+        align-items: center;
+        gap: var(--space-5);
+        padding: var(--space-4) var(--space-5);
+        font-size: var(--fs-sm);
+        color: var(--ink-300);
+        border-left: 2px solid transparent;
+        cursor: pointer;
+      }
+      .rows li[aria-selected="true"] {
+        background: var(--bg-pressed);
+        border-left-color: var(--signal);
+        color: var(--ink-100);
+      }
+      .rows li .name {
+        flex: 1;
+        min-width: 0;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      .rows li mark {
+        background: none;
+        color: var(--signal);
+      }
+      .rows .bullets {
+        flex: 0 0 auto;
+        display: flex;
+        gap: 3px;
+      }
+      .rows li.empty {
+        color: var(--ink-600);
+        font-size: var(--fs-xs);
+        cursor: default;
+      }
+      .combo-meta {
+        display: flex;
+        justify-content: space-between;
+        padding: var(--space-3) var(--space-5);
+        border-top: 1px dashed var(--line-faint);
+        font-size: 10px;
+        letter-spacing: 0.12em;
+        text-transform: uppercase;
+        color: var(--ink-600);
+      }
+
+      /* --- Foot --- */
+      footer {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: var(--space-5);
+        padding: var(--space-5) var(--space-6);
+        border-top: 1px solid var(--line);
+        min-height: 20px;
+      }
+      .hint {
+        font-size: var(--fs-xxs);
+        letter-spacing: var(--tracking-foot);
+        text-transform: uppercase;
+        color: var(--ink-600);
+      }
+      .actions {
+        display: flex;
+        gap: var(--space-4);
+        margin-left: auto;
+      }
+      button.text {
+        font-family: var(--font-mono);
+        font-size: var(--fs-xxs);
+        font-weight: var(--weight-med);
+        letter-spacing: 0.18em;
+        text-transform: uppercase;
+        padding: var(--space-2) var(--space-5);
+        appearance: none;
+        background: transparent;
+        border: 1px solid var(--line);
+        border-radius: var(--radius-sm);
+        color: var(--ink-200);
+        cursor: pointer;
+        transition:
+          background var(--motion-base) var(--ease),
+          border-color var(--motion-base) var(--ease),
+          color var(--motion-base) var(--ease);
+      }
+      button.text:hover {
+        background: var(--bg-elevated);
+        border-color: var(--ink-600);
+        color: var(--ink-100);
+      }
+      button.text.primary {
+        background: var(--ink-100);
+        border-color: var(--ink-100);
+        color: var(--bg-stage);
+      }
+      button.text.primary:hover {
+        background: #fff;
+        border-color: #fff;
+      }
+      button.text.ghost {
+        border-color: transparent;
+        color: var(--ink-soft);
+      }
+      button.text.ghost:hover {
+        background: transparent;
+        color: var(--ink-200);
+      }
+
+      /* Status word: dot + tracked caps. The only decorated chip. */
+      .status {
+        display: none;
+      }
+      .status.on {
+        display: inline-flex;
+        align-items: center;
+        gap: var(--space-3);
+        font-size: var(--fs-xxs);
+        letter-spacing: var(--tracking-caps);
+        text-transform: uppercase;
+      }
+      .status.on::before {
+        content: "";
+        width: 5px;
+        height: 5px;
+        border-radius: 50%;
+        background: currentColor;
+        box-shadow: 0 0 6px currentColor;
+      }
+      .status.warn {
+        color: var(--signal-warn);
+      }
+      .status.danger {
+        color: var(--signal-danger);
+      }
+
+      [hidden] {
+        display: none !important;
+      }
+    </style>
+  </head>
+  <body>
+    <header>
+      <div class="mark">Train<span class="sep">·</span>Menu</div>
+      <div class="controls">
+        <button class="icon" id="doRefresh" title="Refresh">
+          <!-- Lucide RotateCw -->
+          <svg viewBox="0 0 24 24"><path d="M21 12a9 9 0 1 1-2.64-6.36" /><path d="M21 3v6h-6" /></svg>
+        </button>
+        <button class="icon" id="doSettings" title="Settings">
+          <!-- Lucide Settings, inlined verbatim - no icon dependency. -->
+          <svg viewBox="0 0 24 24">
+            <path d="M9.671 4.136a2.34 2.34 0 0 1 4.659 0 2.34 2.34 0 0 0 3.319 1.915 2.34 2.34 0 0 1 2.33 4.033 2.34 2.34 0 0 0 0 3.831 2.34 2.34 0 0 1-2.33 4.033 2.34 2.34 0 0 0-3.319 1.915 2.34 2.34 0 0 1-4.659 0 2.34 2.34 0 0 0-3.32-1.915 2.34 2.34 0 0 1-2.33-4.033 2.34 2.34 0 0 0 0-3.831A2.34 2.34 0 0 1 6.35 6.051a2.34 2.34 0 0 0 3.319-1.915" />
+            <circle cx="12" cy="12" r="3" />
+          </svg>
+        </button>
+        <button class="icon" id="doQuit" title="Quit">
+          <!-- Lucide Power -->
+          <svg viewBox="0 0 24 24"><path d="M18.36 6.64a9 9 0 1 1-12.73 0" /><path d="M12 2v10" /></svg>
+        </button>
+      </div>
+    </header>
+
+    <main>
+      <!-- Departures -->
+      <section id="board" hidden>
+        <div class="hero">
+          <span class="dot" id="heroDot"></span>
+          <span class="code" id="heroCode"></span>
+          <div class="value" id="heroMins">--</div>
+          <div class="toward">
+            <div id="heroToward"></div>
+            <div class="clock" id="heroArrive"></div>
+          </div>
+        </div>
+        <div class="route" id="route"></div>
+
+        <!-- The ruler: axis from now to the last train the feed named. -->
+        <div class="ruler" id="ruler" hidden>
+          <div class="track" id="track"></div>
+          <div class="scale" id="scale"></div>
+        </div>
+
+        <!-- Every train in the feed at this station, both directions. -->
+        <div class="feed" id="feed" hidden>
+          <div class="feedhead">
+            <span class="live"></span>
+            <span id="feedCount"></span>
+            <span class="stamp" id="feedStamp"></span>
+          </div>
+          <table class="feedtable">
+            <tbody id="feedRows"></tbody>
+          </table>
+        </div>
+
+        <!-- Alerts, filtered to the lines that carry the trip. Absent, not
+             empty, until a check has actually landed. -->
+        <div id="alerts" hidden>
+          <div class="watch">
+            <span>watching</span>
+            <span class="chips" id="watchChips"></span>
+            <span class="when" id="watchWhen"></span>
+          </div>
+          <div id="alertList"></div>
+        </div>
+      </section>
+
+      <!-- Setup -->
+      <section id="setup" hidden>
+        <h1>train menu</h1>
+        <div class="lede" id="lede">tell train menu where you travel</div>
+        <form id="form">
+          <label>
+            <div class="label">From</div>
+            <div class="combo">
+              <div class="field">
+                <span class="prompt">&rsaquo;</span
+                ><input
+                  id="from"
+                  autocomplete="off"
+                  placeholder="boarding station"
+                  role="combobox"
+                  aria-expanded="false"
+                  aria-controls="fromRows"
+                  aria-autocomplete="list"
+                /><span class="caret">&#9662;</span>
+              </div>
+              <div class="combo-panel" id="fromPanel" hidden>
+                <ul class="rows" id="fromRows" role="listbox" aria-label="stations"></ul>
+                <div class="combo-meta"><span id="fromCount"></span><span>&#8593;&#8595; enter</span></div>
+              </div>
+            </div>
+          </label>
+          <label>
+            <div class="label">To</div>
+            <div class="combo">
+              <div class="field">
+                <span class="prompt">&rsaquo;</span
+                ><input
+                  id="to"
+                  autocomplete="off"
+                  placeholder="destination station"
+                  role="combobox"
+                  aria-expanded="false"
+                  aria-controls="toRows"
+                  aria-autocomplete="list"
+                /><span class="caret">&#9662;</span>
+              </div>
+              <div class="combo-panel" id="toPanel" hidden>
+                <ul class="rows" id="toRows" role="listbox" aria-label="stations"></ul>
+                <div class="combo-meta"><span id="toCount"></span><span>&#8593;&#8595; enter</span></div>
+              </div>
+            </div>
+          </label>
+          <label>
+            <div class="label">WMATA API key</div>
+            <div class="field">
+              <span class="prompt">&rsaquo;</span><input id="apiKey" type="password" placeholder="developer key" />
+            </div>
+          </label>
+          <div id="advanced" hidden>
+            <label>
+              <div class="label">Menu bar</div>
+              <div class="styles" id="styles" role="radiogroup" aria-label="menu bar style"></div>
+            </label>
+            <label>
+              <div class="label">Brightness</div>
+              <div class="field range">
+                <input id="brightness" type="range" min="0" max="100" step="5" aria-label="brightness" />
+                <span class="unit" id="brightnessOut"></span>
+              </div>
+            </label>
+          </div>
+        </form>
+      </section>
+    </main>
+
+    <footer>
+      <div class="status" id="status"></div>
+      <div class="hint" id="hint"></div>
+      <div class="actions" id="actions"></div>
+    </footer>
+
+    <script>
+      const el = (id) => document.getElementById(id);
+      const board = el("board");
+      const setup = el("setup");
+      const form = el("form");
+      const status = el("status");
+      const hint = el("hint");
+      const actions = el("actions");
+
+      const LABELS = { from: "boarding station", to: "destination", apiKey: "api key" };
+
+      // The menu bar readout styles, in the order they were designed. The ids must
+      // match TRAY_STYLES in ../main/tray-image.js - the renderer is a plain
+      // script with no bundler, so it cannot import them.
+      const STYLES = [
+        ["dot", "dot", "line colour, plain digits"],
+        ["pixel", "pixel", "digits as a departure board"],
+        ["flash", "flash", "inverts under 5 min"],
+      ];
+      // Chosen in the form and saved with it, so picking a style does not commit a
+      // half-typed station.
+      let pickedStyle = "dot";
+
+      // --- Brightness ---
+      // One number lifts the dim end of the ink scale toward white. A single
+      // exponent beats a table of exceptions: at 100 the hero numbers go 96% ->
+      // 98% (invisible) while the faintest text goes 22% -> 50%, and the order of
+      // the steps holds at every setting, so no position can flatten the board's
+      // hierarchy. Only these six TEXT steps move - dividers, hairlines, the mint
+      // signal and the alert tint are not on this scale.
+      //
+      // The base alphas must match the six --ink-N steps in tokens.css: this is a
+      // plain script with no bundler, so it cannot read them from source.
+      const DEFAULT_BRIGHTNESS = 50; // keep in step with ../main/config.js
+      const INK_STEPS = [
+        ["ink-100", 0.96],
+        ["ink-200", 0.86],
+        ["ink-300", 0.65],
+        ["ink-400", 0.48],
+        ["ink-500", 0.34],
+        ["ink-600", 0.22],
+      ];
+
+      function applyBrightness(value) {
+        const lift = Math.min(Math.max(Number(value) || 0, 0), 100);
+        const gamma = 1 + (lift / 100) * 1.2;
+        for (const [token, alpha] of INK_STEPS) {
+          const lifted = alpha ** (1 / gamma);
+          document.documentElement.style.setProperty(`--${token}`, `rgba(255, 255, 255, ${lifted.toFixed(3)})`);
+        }
+      }
+
+      // Live while dragging, so the board behind the form is the preview.
+      function paintBrightness() {
+        const slider = el("brightness");
+        slider.style.setProperty("--fill", `${slider.value}%`);
+        el("brightnessOut").textContent = slider.value;
+        applyBrightness(slider.value);
+      }
+
+      function renderStyles() {
+        el("styles").replaceChildren(
+          ...STYLES.map(([id, name, note]) => {
+            const button = document.createElement("button");
+            button.type = "button";
+            button.className = "style";
+            button.role = "radio";
+            button.dataset.style = id;
+            button.setAttribute("aria-checked", String(id === pickedStyle));
+            const label = document.createElement("span");
+            label.className = "name";
+            label.textContent = name;
+            const hint = document.createElement("span");
+            hint.className = "note";
+            hint.textContent = note;
+            button.append(label, hint);
+            button.addEventListener("click", () => {
+              pickedStyle = id;
+              renderStyles();
+            });
+            return button;
+          }),
+        );
+      }
+
+      // Bundled with the app, so the picker is populated before any key exists.
+      let stations = [];
+      window.trainMenu.getStations().then((list) => {
+        stations = list;
+        for (const combo of combos) combo.refresh();
+      });
+
+      // The station list carries line codes; the dots want colour names. parse.js
+      // owns the same mapping, but the renderer is a plain script with no bundler,
+      // so it cannot import it.
+      const LINE_COLOR = { RD: "red", OR: "orange", BL: "blue", GR: "green", YL: "yellow", SV: "silver" };
+
+      const findStation = (value) => stations.find((s) => s.name.toLowerCase() === value.trim().toLowerCase());
+
+      // A station row: the name with the typed run marked, and one dot per line
+      // the station serves. Built as nodes, never as HTML - the query is typed by
+      // the user and this runs in the renderer.
+      function stationRow(station, query) {
+        const li = document.createElement("li");
+        li.setAttribute("role", "option");
+        const name = document.createElement("span");
+        name.className = "name";
+        const at = query ? station.name.toLowerCase().indexOf(query) : -1;
+        if (at < 0) {
+          name.textContent = station.name;
+        } else {
+          const hit = document.createElement("mark");
+          hit.textContent = station.name.slice(at, at + query.length);
+          name.append(station.name.slice(0, at), hit, station.name.slice(at + query.length));
+        }
+        const bullets = document.createElement("span");
+        bullets.className = "bullets";
+        for (const code of station.lines ?? []) {
+          const dot = document.createElement("span");
+          dot.className = "dot";
+          if (LINE_COLOR[code]) dot.dataset.color = LINE_COLOR[code];
+          bullets.append(dot);
+        }
+        li.append(name, bullets);
+        return li;
+      }
+
+      /**
+       * One station listbox. Opens on click, typing or ArrowDown - deliberately
+       * not on focus, so arriving in Settings does not drop a panel over the form.
+       */
+      function combobox(id) {
+        const input = el(id);
+        const panel = el(`${id}Panel`);
+        const rows = el(`${id}Rows`);
+        const count = el(`${id}Count`);
+        let matches = [];
+        let active = 0;
+
+        const isOpen = () => !panel.hidden;
+
+        function paint() {
+          const query = input.value.trim().toLowerCase();
+          // Earliest match first, so "ross" offers Rosslyn before Hyattsville
+          // Crossing. The list arrives alphabetical and the sort is stable, so
+          // equal-rank stations keep that order.
+          matches = stations
+            .map((station) => ({ station, at: station.name.toLowerCase().indexOf(query) }))
+            .filter((hit) => hit.at >= 0)
+            .sort((a, b) => a.at - b.at)
+            .map((hit) => hit.station);
+          active = Math.max(0, Math.min(active, matches.length - 1));
+          count.textContent = stations.length ? `${matches.length} of ${stations.length}` : "";
+          if (!matches.length) {
+            const li = document.createElement("li");
+            li.className = "empty";
+            li.textContent = stations.length
+              ? `no station matches "${input.value.trim()}"`
+              : "station list unavailable - type the name";
+            rows.replaceChildren(li);
+            return;
+          }
+          rows.replaceChildren(
+            ...matches.map((station, i) => {
+              const li = stationRow(station, query);
+              li.setAttribute("aria-selected", String(i === active));
+              // mousedown, not click: the input's blur would close the panel first.
+              li.addEventListener("mousedown", (event) => {
+                event.preventDefault();
+                choose(i);
+              });
+              return li;
+            }),
+          );
+          rows.children[active]?.scrollIntoView({ block: "nearest" });
+        }
+
+        function open() {
+          if (isOpen()) return;
+          panel.hidden = false;
+          input.setAttribute("aria-expanded", "true");
+          active = 0;
+          paint();
+          reportHeight();
+        }
+
+        function close() {
+          if (!isOpen()) return;
+          panel.hidden = true;
+          input.setAttribute("aria-expanded", "false");
+          reportHeight();
+        }
+
+        function choose(i) {
+          const station = matches[i];
+          if (!station) return;
+          input.value = station.name;
+          setStatus("", "");
+          close();
+        }
+
+        input.addEventListener("click", open);
+        input.addEventListener("blur", close);
+        input.addEventListener("input", () => (isOpen() ? paint() : open()));
+        input.addEventListener("keydown", (event) => {
+          if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+            event.preventDefault();
+            if (!isOpen()) return open();
+            const step = event.key === "ArrowDown" ? 1 : -1;
+            active = (active + step + matches.length) % Math.max(1, matches.length);
+            paint();
+          } else if (event.key === "Enter" && isOpen()) {
+            // Choosing a station must not also submit the form.
+            event.preventDefault();
+            choose(active);
+          } else if (event.key === "Escape" && isOpen()) {
+            event.preventDefault();
+            close();
+          } else if (event.key === "Tab") {
+            close();
+          }
+        });
+
+        return { refresh: () => isOpen() && paint(), close };
+      }
+
+      const combos = ["from", "to"].map(combobox);
+
+      let state = {
+        configured: false,
+        config: {},
+        title: {},
+        note: "",
+        platform: [],
+        ruler: { span: 0, scale: [], marks: [] },
+        fetchedAt: 0,
+        arriveAt: 0,
+        watching: [],
+        alerts: [],
+        checkedAt: 0,
+        stale: false,
+        error: "",
+        nextAt: 0,
+      };
+      let mode = "board"; // "board" | "setup"
+
+      // The window is sized to its content: the renderer measures itself and the
+      // main process applies the height. An open combobox panel is out of flow, so
+      // the body does not grow with it - without the second term the popover
+      // window would clip the station list.
+      function reportHeight() {
+        const body = document.body.getBoundingClientRect().height;
+        const panel = document.querySelector(".combo-panel:not([hidden])");
+        const needed = panel ? panel.getBoundingClientRect().bottom + 12 : 0;
+        window.trainMenu.resize(Math.ceil(Math.max(body, needed)));
+      }
+      new ResizeObserver(reportHeight).observe(document.body);
+
+      function setStatus(text, kind) {
+        status.className = text ? `status on ${kind}` : "status";
+        status.textContent = text;
+      }
+
+      // The deadline comes from the main process, which owns the timer; the second
+      // hand is drawn locally so no IPC is needed once a second.
+      function tickCountdown() {
+        if (mode !== "board") return;
+        if (state.error) {
+          hint.textContent = state.error;
+          return;
+        }
+        const left = Math.max(0, Math.ceil((state.nextAt - Date.now()) / 1000));
+        hint.textContent = state.nextAt ? `updating in ${left}s` : "";
+      }
+      setInterval(tickCountdown, 1000);
+
+      // 24-hour, tabular, no seconds unless asked: these are clock readings, and
+      // the wall-clock stamp is the freshness proof for the whole board.
+      const clock = (ms, seconds) =>
+        new Date(ms).toLocaleTimeString("en-GB", {
+          hour: "2-digit",
+          minute: "2-digit",
+          ...(seconds ? { second: "2-digit" } : {}),
+        });
+
+      const node = (tag, className, text) => {
+        const element = document.createElement(tag);
+        if (className) element.className = className;
+        if (text !== undefined) element.textContent = text;
+        return element;
+      };
+
+      // The station list column is minutes only ("3"); the ruler labels carry the
+      // unit ("3m"). BRD, ARR and "--" pass through untouched.
+      const bareMin = (wait) => wait.replace(/m$/, "");
+
+      // A line's name is its colour, so the alert card needs no second table.
+      const lineName = (code) => {
+        const color = LINE_COLOR[code];
+        return color ? color[0].toUpperCase() + color.slice(1) : code;
+      };
+
+      function renderRuler() {
+        const { marks, scale } = state.ruler;
+        el("ruler").hidden = marks.length === 0;
+        const track = [node("div", "axis")];
+        // One tick per scale label. The last sits a pixel in so it is not clipped.
+        scale.forEach((_, i) => {
+          const tick = node("div", "tick");
+          const pct = (i / (scale.length - 1)) * 100;
+          tick.style.left = i === scale.length - 1 ? "calc(100% - 1px)" : `${pct}%`;
+          track.push(tick);
+        });
+        for (const mark of marks) {
+          const pin = node("div", `pin ${mark.mine ? "mine" : "other"}${mark.lift ? " lift" : ""}`);
+          pin.style.left = `${mark.pct}%`;
+          const lab = node("div", mark.now ? "lab now" : "lab");
+          if (mark.mine) {
+            lab.textContent = mark.wait;
+            pin.append(lab, node("div", "sub", mark.line), node("div", "stem"));
+          } else {
+            // Two lines: the line code over the wait, as tight as 10px caps allow.
+            lab.append(document.createTextNode(mark.line), document.createElement("br"), document.createTextNode(mark.wait));
+            pin.append(node("div", "stem"), lab);
+          }
+          track.push(pin);
+        }
+        // A dropped label below the line needs the room, and only then.
+        el("track").classList.toggle("deep", marks.some((mark) => !mark.mine && mark.lift));
+        el("track").replaceChildren(...track);
+        el("scale").replaceChildren(...scale.map((text) => node("span", "", text)));
+      }
+
+      function renderFeed() {
+        const trains = state.platform;
+        el("feed").hidden = trains.length === 0;
+        el("feedCount").textContent = `${state.config.from ?? ""} · trains`;
+        el("feedStamp").textContent = state.fetchedAt ? clock(state.fetchedAt, true) : "";
+
+        // Group is 1 or 2 and its meaning is per-station, so it is only ever used
+        // to split the two directions apart - never to name a platform.
+        const mineGroup = trains.find((train) => train.mine)?.group;
+        // Within a direction, the trains that serve the trip come first: they are
+        // the ones in full ink, and the answer should not need hunting for.
+        const ordered = (group) => [...group.filter((t) => t.mine), ...group.filter((t) => !t.mine)];
+        const groups = mineGroup
+          ? [
+              ["", ordered(trains.filter((train) => train.group === mineGroup))],
+              ["Opposite direction", ordered(trains.filter((train) => train.group !== mineGroup))],
+            ]
+          : [["", trains]];
+        const rows = [];
+        for (const [label, group] of groups) {
+          if (!group.length) continue;
+          if (label) {
+            const head = node("tr", "group");
+            const cell = node("td", "", label);
+            cell.colSpan = 3;
+            head.append(cell);
+            rows.push(head);
+          }
+          for (const train of group) {
+            const row = node("tr", train.mine ? "" : "dim");
+            row.append(
+              node("td", "c-min", bareMin(train.wait)),
+              node("td", "c-ln", train.line),
+              node("td", "", train.terminus),
+            );
+            rows.push(row);
+          }
+        }
+        el("feedRows").replaceChildren(...rows);
+      }
+
+      function renderAlerts() {
+        // Absent, not empty: until a check has landed there is nothing to report,
+        // and a bare "watching" row would claim a clear feed we have not read.
+        el("alerts").hidden = !state.checkedAt;
+        if (!state.checkedAt) return;
+        el("watchChips").replaceChildren(...state.watching.map((code) => node("span", "chip", code)));
+        el("watchWhen").textContent = clock(state.checkedAt);
+
+        if (!state.alerts.length) {
+          const clear = node("div", "clear");
+          clear.append(
+            node("span", "ok", "✓"),
+            node("span", "", "No active alerts on your lines"),
+            node("span", "when", `checked ${clock(state.checkedAt)}`),
+          );
+          el("alertList").replaceChildren(clear);
+          return;
+        }
+        el("alertList").replaceChildren(
+          ...state.alerts.map((alert) => {
+            const card = node("div", "alert");
+            const top = node("div", "top");
+            top.append(
+              node("span", "adot"),
+              node("span", "", `${alert.lines.map(lineName).join("/")} · ${alert.type}`),
+              node("span", "age", alert.age ? `updated ${alert.age}` : ""),
+            );
+            const body = node("div", "body", alert.description);
+            // Descriptions run past 300 characters, so the clamp needs a way out
+            // rather than cutting mid-fact.
+            const more = node("span", "more", "Read all");
+            more.addEventListener("click", () => {
+              const open = card.classList.toggle("open");
+              more.textContent = open ? "Show less" : "Read all";
+            });
+            card.append(top, body, more);
+            return card;
+          }),
+        );
+      }
+
+      function renderBoard() {
+        board.hidden = false;
+        setup.hidden = true;
+        // Also the revert path: leaving Settings without saving drops the live
+        // preview back to whatever is actually on disk.
+        applyBrightness(state.config.brightness ?? DEFAULT_BRIGHTNESS);
+        const next = state.platform.find((train) => train.mine);
+        el("heroMins").textContent = state.title.mins || "--";
+        el("heroCode").textContent = state.title.line ?? "";
+        el("heroDot").dataset.color = state.title.color ?? "";
+        // The note is why the board is empty, when it is, and stands in for the
+        // destination rather than landing in the wait column.
+        el("heroToward").textContent = state.note || next?.terminus || "";
+        // A tilde, always: RailTime is a scheduled average, not a promise.
+        el("heroArrive").textContent = state.arriveAt ? `arrive ~${clock(state.arriveAt)}` : "";
+        el("route").textContent = [state.config.from, state.config.to].filter(Boolean).join("  →  ");
+        renderRuler();
+        renderFeed();
+        renderAlerts();
+        setStatus(state.stale ? "stale" : "", "warn");
+        tickCountdown();
+        actions.replaceChildren();
+      }
+
+      function renderSetup() {
+        board.hidden = true;
+        setup.hidden = false;
+        el("advanced").hidden = !state.configured;
+        el("lede").textContent = state.configured
+          ? "change where train menu looks"
+          : "tell train menu where you travel, and how to reach wmata";
+        el("from").value = state.config.from ?? "";
+        el("to").value = state.config.to ?? "";
+        el("apiKey").value = state.config.apiKey ?? "";
+        pickedStyle = state.config.style ?? "dot";
+        renderStyles();
+        el("brightness").value = state.config.brightness ?? DEFAULT_BRIGHTNESS;
+        paintBrightness();
+        setStatus("", "");
+        hint.textContent = "";
+
+        const save = document.createElement("button");
+        save.className = "text primary";
+        save.textContent = "Save";
+        save.addEventListener("click", submit);
+        actions.replaceChildren();
+        if (state.configured) {
+          const cancel = document.createElement("button");
+          cancel.className = "text ghost";
+          cancel.textContent = "Cancel";
+          cancel.addEventListener("click", () => show("board"));
+          actions.append(cancel);
+        }
+        actions.append(save);
+        el("from").focus();
+      }
+
+      function show(next) {
+        mode = next;
+        for (const combo of combos) combo.close();
+        if (mode === "setup") renderSetup();
+        else renderBoard();
+      }
+
+      async function submit() {
+        // All three are needed before a fetch can succeed, so refuse early rather
+        // than saving a config that can only produce an error on the board.
+        const missing = ["from", "to", "apiKey"].filter((id) => !el(id).value.trim());
+        if (missing.length) {
+          setStatus(missing.length > 1 ? "stations and key required" : `${LABELS[missing[0]]} required`, "danger");
+          return;
+        }
+        // A typo here only surfaces later as a failed refresh, so catch it while
+        // the user is still looking at the field. Skipped if the list is empty.
+        const typo = stations.length && ["from", "to"].find((id) => !findStation(el(id).value));
+        if (typo) {
+          setStatus(`unknown ${LABELS[typo]}`, "danger");
+          el(typo).focus();
+          return;
+        }
+        setStatus("", "");
+        await window.trainMenu.save({
+          from: el("from").value,
+          to: el("to").value,
+          apiKey: el("apiKey").value,
+          // No refreshSec: 30s is the only interval now, and normalizeConfig
+          // defaults the missing field. Faster than that is the refresh button.
+          style: pickedStyle,
+          brightness: Number(el("brightness").value),
+        });
+        show("board");
+      }
+
+      form.addEventListener("submit", (event) => {
+        event.preventDefault();
+        submit();
+      });
+
+      el("brightness").addEventListener("input", paintBrightness);
+
+      el("doRefresh").addEventListener("click", () => window.trainMenu.refresh());
+      el("doSettings").addEventListener("click", () => show(mode === "setup" ? "board" : "setup"));
+      el("doQuit").addEventListener("click", () => window.trainMenu.quit());
+
+      function apply(next) {
+        state = next;
+        // A state push must never re-render the setup form: renderSetup() rewrites
+        // every field and refocuses #from, so a refresh landing mid-typing reverted
+        // the (masked) api key and sent the rest of it to the boarding station.
+        // The form is drawn only by user action or on first run.
+        if (!state.configured && mode !== "setup") show("setup");
+        else if (mode === "board") renderBoard();
+      }
+
+      window.trainMenu.onState(apply);
+      window.trainMenu.getState().then(apply);
+    </script>
+  </body>
+</html>

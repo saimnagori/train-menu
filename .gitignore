@@ -1,0 +1,24 @@
+# deps
+node_modules/
+
+# packaged bundles and dmgs. A stray release/ bundle also gets registered by
+# LaunchServices and hijacks `open -a "Train Menu"`, so it must never be shared.
+release/
+# create-dmg.mjs takes its output dir as argv[3], so a dmg can land outside release/
+*.dmg
+
+# macOS
+.DS_Store
+
+# the `stations` script writes stations.json.tmp then renames it
+*.tmp
+
+# local secrets - the WMATA key lives in userData config.json, never here
+.env
+.env.*
+
+# editor / tooling
+.vscode/
+.idea/
+*.log
+/mocks

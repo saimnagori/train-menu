@@ -1,0 +1,9 @@
+# Electron's postinstall must run - it downloads the binary the app launches with.
+allowBuilds:
+  electron: true
+  # Windows installer builder - never used here, this is a macOS-only app.
+  electron-winstaller: false
+
+# supportedArchitectures (darwin/x64+arm64) would let electron-builder emit a
+# universal bundle. Left out while the app ships arm64 only: it doubles the
+# Electron download for no benefit.
