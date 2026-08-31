@@ -11,6 +11,12 @@ export const DEFAULT_REFRESH_SEC = 30;
 // scale; the renderer turns this into an exponent over the six ink text tokens.
 export const DEFAULT_BRIGHTNESS = 50;
 
+// Minutes from wherever you are to the platform. 0 is the default and means the
+// whole walk shadow is off - the board reports the next train, as it always has.
+// Past an hour the shadow would swallow every train the feed names, so the value
+// stops being a walk and starts being a bug.
+export const MAX_WALK_MIN = 60;
+
 // Trust boundary: this comes from a form and from a hand-editable JSON file, so
 // clamp the interval rather than letting a typo hammer the transit API (or set a
 // timer of 0). Stations are free text - only the host script knows what is valid.
@@ -31,7 +37,11 @@ export function normalizeConfig(raw) {
   // absent field is told apart from a zero one rather than clamped up.
   const lift = raw?.brightness == null || raw.brightness === "" ? NaN : Number(raw.brightness);
   const brightness = Number.isFinite(lift) ? Math.min(Math.max(Math.round(lift), 0), 100) : DEFAULT_BRIGHTNESS;
-  return { from, to, apiKey, refreshSec, style, brightness };
+  // 0 is both the default and "off", so unlike brightness an absent field and a
+  // zero one mean the same thing and need no telling apart.
+  const walk = Number(raw?.walkMin);
+  const walkMin = Number.isFinite(walk) ? Math.min(Math.max(Math.round(walk), 0), MAX_WALK_MIN) : 0;
+  return { from, to, apiKey, refreshSec, style, brightness, walkMin };
 }
 
 export function isConfigured(config) {

@@ -109,6 +109,7 @@ assert.deepEqual(normalizeConfig({ from: " Central ", to: "Airport", refreshSec:
   refreshSec: 45,
   style: DEFAULT_TRAY_STYLE,
   brightness: DEFAULT_BRIGHTNESS,
+  walkMin: 0,
 });
 // The menu bar style comes from the same hand-editable file: an unknown value
 // would render no readout at all, so it falls back instead.

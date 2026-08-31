@@ -39,7 +39,7 @@ export function rulerSpan(etas) {
  * so is not drawn - it still appears in the station list, which claims no
  * position. BRD and ARR are eta 0: the left edge, labelled as themselves.
  */
-export function rulerModel(trains) {
+export function rulerModel(trains, walk = 0) {
   const drawn = trains.filter((train) => Number.isFinite(train.eta));
   const span = rulerSpan(drawn.map((train) => train.eta));
   const marks = drawn
@@ -49,6 +49,9 @@ export function rulerModel(trains) {
       wait: train.wait,
       line: train.line,
       mine: Boolean(train.mine),
+      // Set by walkModel: this train leaves before you can reach the platform.
+      // The ruler dims it where it stands rather than moving or hiding it.
+      missed: Boolean(train.missed),
       now: train.eta === 0,
       lift: false,
     }))
@@ -61,5 +64,10 @@ export function rulerModel(trains) {
 
   const scale = [];
   for (let at = 0; at <= span; at += STEP_MIN) scale.push(at === 0 ? "now" : `${at}m`);
-  return { span, scale, marks };
+  // The walk as a share of the axis - the same arithmetic as every mark's
+  // position, so the shadow's edge and a mark on that minute land together. A
+  // walk longer than the axis covers the whole band, which is the honest reading:
+  // nothing the feed has named is reachable.
+  const shadowPct = walk > 0 ? Math.min(walk / span, 1) * 100 : 0;
+  return { span, scale, marks, shadowPct };
 }

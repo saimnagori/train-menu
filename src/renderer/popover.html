@@ -74,14 +74,30 @@
         padding: var(--space-6);
       }
 
-      /* --- Hero: next departure --- */
+      /* --- Hero: next departure ---
+         With a walk set the hero answers rather than reports: the big number is
+         minutes until you have to move, and the train it refers to is named
+         beside it so the two can never be read apart. */
       .hero {
         display: flex;
         align-items: baseline;
         gap: var(--space-4);
       }
+      .eyebrow {
+        font-size: var(--fs-xxs);
+        letter-spacing: var(--tracking-caps);
+        text-transform: uppercase;
+        color: var(--signal);
+        margin-bottom: var(--space-2);
+      }
       .hero .value {
         font-size: var(--fs-3xl);
+      }
+      /* "now" is not a minute count, so it is the word - at the weight of a
+         number. A train you must run for must never render as "0m". */
+      .hero .value.now {
+        font-size: var(--fs-2xl);
+        color: var(--signal);
       }
       .hero .toward {
         font-size: var(--fs-xs);
@@ -135,6 +151,27 @@
         height: 11px;
         background: var(--ink-800);
       }
+      /* The walk, drawn over the axis it is measured against. A train dims
+         because this region falls across it - the dimming is the shadow, not a
+         style choice made about the train. */
+      .track .shadow {
+        position: absolute;
+        left: 0;
+        top: 10px;
+        height: 31px;
+        background: var(--ink-900);
+        border-right: 1px solid var(--ink-700);
+      }
+      .track .shadow .slab {
+        position: absolute;
+        left: var(--space-3);
+        bottom: var(--space-1);
+        font-size: 0.625rem;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+        color: var(--ink-600);
+        white-space: nowrap;
+      }
       .pin {
         position: absolute;
         transform: translateX(-50%);
@@ -167,6 +204,16 @@
         margin: 0 auto;
         background: var(--signal);
         box-shadow: var(--signal-glow);
+      }
+      /* Inside the shadow: still at its true minute, still drawn, just not
+         yours. Greyed rather than removed - sprinting for it is the user's call. */
+      .pin.mine.missed .lab,
+      .pin.mine.missed .sub {
+        color: var(--ink-600);
+      }
+      .pin.mine.missed .stem {
+        background: var(--ink-700);
+        box-shadow: none;
       }
       .pin.other {
         top: 43px;
@@ -255,6 +302,24 @@
       }
       table.feedtable tr.dim .c-min {
         color: var(--ink-500);
+      }
+      /* What this train is to you: only ever "gone" or "leave in Nm", and only
+         on the trains that serve the trip. A wrong-branch train gets no verdict,
+         because the walk has nothing to say about a train you are not taking. */
+      table.feedtable .c-verdict {
+        text-align: right;
+        white-space: nowrap;
+        font-size: 0.625rem;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+        color: var(--ink-600);
+      }
+      table.feedtable tr.go .c-verdict {
+        color: var(--signal);
+      }
+      table.feedtable tr.missed td,
+      table.feedtable tr.missed .c-min {
+        color: var(--ink-600);
       }
       table.feedtable tr.group td {
         padding-top: var(--space-4);
@@ -467,6 +532,12 @@
       input::placeholder {
         color: var(--ink-faint);
       }
+      /* The stepper is macOS chrome on a surface that has none of it, and the
+         field is three keystrokes wide anyway. */
+      input[type="number"]::-webkit-inner-spin-button {
+        appearance: none;
+        margin: 0;
+      }
 
       /* --- Brightness slider ---
          A 1px hairline track with a mint dot for a thumb and a 1px mint fill
@@ -502,6 +573,16 @@
         background: var(--signal);
         box-shadow: var(--signal-glow);
       }
+      /* A one-line gloss under a field, for the setting whose off switch is a
+         value rather than a control. */
+      .sublabel {
+        margin-top: var(--space-3);
+        font-size: var(--fs-xxs);
+        letter-spacing: var(--tracking-caps);
+        text-transform: uppercase;
+        color: var(--ink-600);
+      }
+      .field .unit,
       .field.range .unit {
         flex: 0 0 auto;
         width: 4ch;
@@ -757,6 +838,9 @@
     <main>
       <!-- Departures -->
       <section id="board" hidden>
+        <!-- Present only when a walk is set and something in the feed is
+             reachable; otherwise the hero reports the next train, as before. -->
+        <div class="eyebrow" id="heroEyebrow" hidden>Leave in</div>
         <div class="hero">
           <span class="dot" id="heroDot"></span>
           <span class="code" id="heroCode"></span>
@@ -855,6 +939,17 @@
             <label>
               <div class="label">Menu bar</div>
               <div class="styles" id="styles" role="radiogroup" aria-label="menu bar style"></div>
+            </label>
+            <label>
+              <div class="label">Walk to platform</div>
+              <div class="field">
+                <span class="prompt">&rsaquo;</span
+                ><input id="walkMin" type="number" min="0" max="60" step="1" inputmode="numeric" placeholder="0" /><span
+                  class="unit"
+                  >min</span
+                >
+              </div>
+              <div class="sublabel">0 turns the walk off</div>
             </label>
             <label>
               <div class="label">Brightness</div>
@@ -1108,9 +1203,10 @@
         title: {},
         note: "",
         platform: [],
-        ruler: { span: 0, scale: [], marks: [] },
+        ruler: { span: 0, scale: [], marks: [], shadowPct: 0 },
         fetchedAt: 0,
         arriveAt: 0,
+        leaveIn: null,
         watching: [],
         alerts: [],
         checkedAt: 0,
@@ -1176,10 +1272,24 @@
         return color ? color[0].toUpperCase() + color.slice(1) : code;
       };
 
+      // Set once per board render: whether the walk has an answer to give. Null
+      // means either no walk configured or nothing reachable in the feed, and
+      // both fall back to reporting the next train.
+      const walking = () => state.leaveIn !== null && state.leaveIn !== undefined;
+
+      // "leave in 1m", and at zero the word rather than "0m".
+      const leaveLabel = () => (state.leaveIn === 0 ? "leave now" : `leave in ${state.leaveIn}m`);
+
       function renderRuler() {
-        const { marks, scale } = state.ruler;
+        const { marks, scale, shadowPct } = state.ruler;
         el("ruler").hidden = marks.length === 0;
         const track = [node("div", "axis")];
+        if (shadowPct > 0) {
+          const shadow = node("div", "shadow");
+          shadow.style.width = `${shadowPct}%`;
+          shadow.append(node("span", "slab", `${state.config.walkMin} min walk`));
+          track.push(shadow);
+        }
         // One tick per scale label. The last sits a pixel in so it is not clipped.
         scale.forEach((_, i) => {
           const tick = node("div", "tick");
@@ -1188,7 +1298,10 @@
           track.push(tick);
         });
         for (const mark of marks) {
-          const pin = node("div", `pin ${mark.mine ? "mine" : "other"}${mark.lift ? " lift" : ""}`);
+          const pin = node(
+            "div",
+            `pin ${mark.mine ? "mine" : "other"}${mark.lift ? " lift" : ""}${mark.missed ? " missed" : ""}`,
+          );
           pin.style.left = `${mark.pct}%`;
           const lab = node("div", mark.now ? "lab now" : "lab");
           if (mark.mine) {
@@ -1226,22 +1339,35 @@
             ]
           : [["", trains]];
         const rows = [];
+        // On whenever a walk is set, not only when something is catchable: with a
+        // walk longer than the whole feed the hero falls back to reporting the
+        // next train, and "gone" on every row is exactly what has to be said.
+        const verdicts = state.config.walkMin > 0;
         for (const [label, group] of groups) {
           if (!group.length) continue;
           if (label) {
             const head = node("tr", "group");
             const cell = node("td", "", label);
-            cell.colSpan = 3;
+            cell.colSpan = verdicts ? 4 : 3;
             head.append(cell);
             rows.push(head);
           }
           for (const train of group) {
-            const row = node("tr", train.mine ? "" : "dim");
+            // "gone" and "leave in" are decided in the main process, on the one
+            // list all three surfaces read - the row never re-derives them.
+            const kind = train.target ? "go" : train.missed ? "missed" : train.mine ? "" : "dim";
+            const row = node("tr", kind);
             row.append(
               node("td", "c-min", bareMin(train.wait)),
               node("td", "c-ln", train.line),
               node("td", "", train.terminus),
             );
+            // A wrong-branch train gets a cell but no word: the column has to
+            // stay square, and the walk has no opinion about a train that is not
+            // yours in the first place.
+            if (verdicts) {
+              row.append(node("td", "c-verdict", train.target ? leaveLabel() : train.missed ? "gone" : ""));
+            }
             rows.push(row);
           }
         }
@@ -1296,12 +1422,27 @@
         // preview back to whatever is actually on disk.
         applyBrightness(state.config.brightness ?? DEFAULT_BRIGHTNESS);
         const next = state.platform.find((train) => train.mine);
-        el("heroMins").textContent = state.title.mins || "--";
-        el("heroCode").textContent = state.title.line ?? "";
+        // With a walk set the hero is the answer - minutes until you move - and
+        // the train it means is named on the right, never left implicit. Without
+        // one it is the next train's wait, exactly as before.
+        const target = state.platform.find((train) => train.target);
+        el("heroEyebrow").hidden = !walking();
+        // "Leave in now" is not a sentence: at zero the eyebrow drops the "in".
+        el("heroEyebrow").textContent = state.leaveIn === 0 ? "Leave" : "Leave in";
+        el("heroMins").textContent = walking()
+          ? state.leaveIn === 0
+            ? "now"
+            : `${state.leaveIn}m`
+          : state.title.mins || "--";
+        el("heroMins").classList.toggle("now", walking() && state.leaveIn === 0);
+        // In walk mode the line is part of the train's name on the right, so the
+        // code beside the number would print it twice.
+        el("heroCode").textContent = walking() ? "" : (state.title.line ?? "");
         el("heroDot").dataset.color = state.title.color ?? "";
         // The note is why the board is empty, when it is, and stands in for the
         // destination rather than landing in the wait column.
-        el("heroToward").textContent = state.note || next?.terminus || "";
+        el("heroToward").textContent =
+          state.note || (target ? `${target.line} ${target.wait} · ${target.terminus}` : (next?.terminus ?? ""));
         // A tilde, always: RailTime is a scheduled average, not a promise.
         el("heroArrive").textContent = state.arriveAt ? `arrive ~${clock(state.arriveAt)}` : "";
         el("route").textContent = [state.config.from, state.config.to].filter(Boolean).join("  →  ");
@@ -1325,6 +1466,7 @@
         el("apiKey").value = state.config.apiKey ?? "";
         pickedStyle = state.config.style ?? "dot";
         renderStyles();
+        el("walkMin").value = state.config.walkMin ?? 0;
         el("brightness").value = state.config.brightness ?? DEFAULT_BRIGHTNESS;
         paintBrightness();
         setStatus("", "");
@@ -1377,6 +1519,9 @@
           // No refreshSec: 30s is the only interval now, and normalizeConfig
           // defaults the missing field. Faster than that is the refresh button.
           style: pickedStyle,
+          // A blank field is 0, which is the off value - normalizeConfig clamps
+          // the rest, so a pasted "999" cannot shadow the whole feed.
+          walkMin: Number(el("walkMin").value),
           brightness: Number(el("brightness").value),
         });
         show("board");

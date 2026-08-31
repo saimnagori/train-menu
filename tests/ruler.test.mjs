@@ -78,6 +78,20 @@ const junk = rulerModel([{ eta: null, wait: "--", line: "OR", mine: true }, t(4,
 assert.deepEqual(junk.marks.map((m) => m.wait), ["4m"]);
 assert.deepEqual(rulerModel([]).marks, [], "an empty feed draws no marks");
 
+// The walk shadow is the same arithmetic as a mark's position, so its edge and a
+// mark on that minute land on the same pixel: 5 minutes of a 10 minute axis is
+// half the band, where the 6m train sits at 60% and is still outside it.
+const shaded = rulerModel(
+  [{ ...t(3, "OR", true), missed: true }, t(6, "SV", true), t(1, "BL", false)],
+  5,
+);
+assert.equal(shaded.shadowPct, 50);
+assert.deepEqual(shaded.marks.map((m) => [m.wait, m.missed]), [["1m", false], ["3m", true], ["6m", false]]);
+assert.equal(rulerModel([t(3, "OR", true)]).shadowPct, 0, "no walk draws no shadow");
+// A walk past the last train the feed named covers the whole band rather than
+// running off the end of it - nothing here is reachable, and that is the reading.
+assert.equal(rulerModel([t(3, "OR", true)], 30).shadowPct, 100);
+
 // Never state a gap unless a train brackets it on both sides. With two trains at
 // 3m and 6m there is no third train, so there is nothing to say - the model
 // offers no gap, no horizon and no commentary to render.

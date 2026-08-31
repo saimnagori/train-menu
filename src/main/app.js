@@ -9,6 +9,7 @@ import { relativeAge } from "../shared/alerts.js";
 import { parseAlerts, parsePayload } from "../shared/parse.js";
 import { rulerModel } from "../shared/ruler.js";
 import { listStations } from "../shared/stations.js";
+import { walkModel, walkTitle } from "../shared/walk.js";
 
 const DEFAULT_SCRIPT = join(import.meta.dirname, "..", "departures", "index.js");
 // Dev-only override. In a packaged build this is an env var any local process can
@@ -98,20 +99,42 @@ function runScript(scriptArgs, parse) {
   });
 }
 
+// The walk applied to the last good board. Computed in one place because three
+// surfaces read it - the menu bar, the hero and the station list - and they must
+// not be able to disagree about which train is yours.
+const walked = () => walkModel(lastGood?.platform ?? [], config.walkMin);
+
+// The script's arrival clock is for the soonest train that serves the trip, and
+// the walk can move you to a later one. The ride between the two stations is the
+// same either way, so shifting the clock by the difference in wait is exact - no
+// second estimate stacked on the first.
+function arriveAt(target) {
+  const base = lastGood?.arriveAt ?? 0;
+  const next = lastGood?.platform.find((train) => train.mine);
+  if (!base || !target || !Number.isFinite(target.eta) || !Number.isFinite(next?.eta)) return base;
+  return base + (target.eta - next.eta) * 60_000;
+}
+
 function snapshot() {
+  const walk = walked();
   return {
     configured: isConfigured(config),
     config,
-    title: lastGood?.title ?? { line: "", color: "", mins: "" },
+    title: walkTitle(walk, lastGood?.title ?? { line: "", color: "", mins: "" }),
     note: lastGood?.note ?? "",
     // Every revenue train at the platform, each flagged whether it serves the
-    // trip. The ruler and the station list are two readings of this one list.
-    platform: lastGood?.platform ?? [],
+    // trip and whether the walk has already taken it. The ruler and the station
+    // list are two readings of this one list.
+    platform: walk.trains,
+    // Minutes until you have to move for the train the title names. Null when no
+    // walk is set, and when the walk is longer than every train in the feed - the
+    // popover then falls back to reporting the next train.
+    leaveIn: walk.leaveIn,
     // Placement is computed here rather than in the renderer: the renderer is a
     // plain script with no bundler, so it cannot import the tested module.
-    ruler: rulerModel(lastGood?.platform ?? []),
+    ruler: rulerModel(walk.trains, walk.walk),
     fetchedAt: lastGood?.fetchedAt ?? 0,
-    arriveAt: lastGood?.arriveAt ?? 0,
+    arriveAt: arriveAt(walk.target),
     // The chips report the lines the check actually ran against, so the filter
     // stays inspectable even in the seconds after a route change.
     watching,
@@ -147,7 +170,14 @@ function loadBitmaps(path) {
 
 // The payload gives "4m" / "BRD" / "--"; renderTray keeps only the glyphs it
 // knows, so the unit drops out on its own. Unconfigured shows the mark alone.
-const readoutText = () => (lastGood ? lastGood.title.mins : isConfigured(config) ? "--" : "");
+//
+// With a walk set this is the wait for the train you can catch, not the soonest
+// one - the same quantity as before, on the train the popover's hero names. It is
+// deliberately not the leave-in number: in the menu bar there is no room for the
+// word "leave", and a bare "1" that means something other than minutes-to-train
+// is a misread waiting to happen.
+const trayTitle = () => walkTitle(walked(), lastGood?.title ?? { line: "", color: "", mins: "" });
+const readoutText = () => (lastGood ? trayTitle().mins : isConfigured(config) ? "--" : "");
 
 // The readout is a drawn image because `setTitle` can only render monochrome
 // system text, and both the line bullet and the flash chip need color. The `dot`
@@ -156,7 +186,7 @@ const readoutText = () => (lastGood ? lastGood.title.mins : isConfigured(config)
 function trayImage() {
   const readout = {
     text: readoutText(),
-    color: lastGood?.title.color ?? "",
+    color: lastGood ? trayTitle().color : "",
     stale,
     style: config.style,
     ink: nativeTheme.shouldUseDarkColors ? INK_DARK : INK_LIGHT,
@@ -178,7 +208,7 @@ function publish() {
   // the readout does not shift as the wait ticks down.
   const title = config.style === "dot" ? readoutText().replace(/m$/, "") : "";
   tray.setTitle(title, { fontType: "monospacedDigit" });
-  tray.setToolTip(error || (lastGood ? `${lastGood.title.mins} to ${config.to}` : "Train Menu"));
+  tray.setToolTip(error || (lastGood ? `${trayTitle().mins} to ${config.to}` : "Train Menu"));
   popover?.webContents.send("state", snapshot());
 }
 
