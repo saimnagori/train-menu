@@ -163,9 +163,10 @@ export const serviceDate = (date) =>
 
 const secondsInto = (date) => date.getHours() * 3600 + date.getMinutes() * 60 + date.getSeconds();
 
-// Past this the answer stops being useful and starts being an axis two hours long
-// with two marks on it. At 01:00 the next train is genuinely hours away, and the
-// honest reading of that is the quiet board, not a mark at 4h12m.
+// Past this the answer stops being useful. At 01:00 the next train is genuinely
+// hours away, and the honest reading of that is the quiet board, not a row that
+// says 4h12m. The board's own window is shorter still - this is the outer bound on
+// what the timetable will even offer it.
 export const HORIZON_MIN = 90;
 
 /**

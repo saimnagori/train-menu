@@ -147,8 +147,8 @@ assert.deepEqual(nextScheduled(SCHEDULE, [], at(8, 45), 2), [
   { wait: "~16m", eta: 16, line: "OR", group: "1", terminus: "New Carrollton", mine: true, source: "sched" },
 ]);
 
-// Two rows at most: this answers "when is the next one I can catch", not "print
-// the timetable" - and a longer tail would stretch the axis for no gain.
+// The cap is honoured: this answers "when is the next one I can catch", not
+// "print the timetable". The board drops whatever falls past its window anyway.
 const many = {
   group: "1",
   dates: DATES,
@@ -212,9 +212,9 @@ assert.deepEqual(early.map((r) => [r.eta, r.line]), [[22, "SV"]], "yesterday's a
 // The same 25:52 read at 00:45, an hour and seven minutes before it leaves.
 assert.deepEqual(nextScheduled(SCHEDULE, [], new Date(2026, 8, 1, 0, 45), 2).map((r) => r.eta), [67]);
 
-// Past the horizon the honest reading is a quiet board, not a mark hours out. At
-// 23:00 the 25:52 departure is nearly three hours away, and saying so on a 172
-// minute axis would be worse than saying nothing.
+// Past the horizon the honest reading is a quiet board, not a row hours out. At
+// 23:00 the 25:52 departure is nearly three hours away, and printing it would be
+// worse than saying nothing.
 assert.equal(HORIZON_MIN, 90);
 assert.deepEqual(nextScheduled(SCHEDULE, [], at(23, 0), 2), []);
 assert.deepEqual(nextScheduled(SCHEDULE, [], new Date(2026, 8, 1, 3, 0), 2), [], "nothing runs at 3am and nothing is claimed");

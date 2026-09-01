@@ -96,7 +96,7 @@ data.
 | `src/main/bounds.js` | popover placement under the tray icon |
 | `src/departures/index.js` | WMATA client, predictions and incidents |
 | `src/shared/parse.js` | the script contract |
-| `src/shared/ruler.js` | minute-ruler placement |
+| `src/shared/board.js` | which departures the list draws, and in what order |
 | `src/shared/alerts.js` | incident parsing, line filter, relative age |
 | `src/shared/stations.js` | station name/code matching |
 | `src/shared/stations.json` | bundled station list, so setup works with no key |

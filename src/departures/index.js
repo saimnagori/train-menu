@@ -184,9 +184,9 @@ function terminusCodes(list, train) {
 // feed (protobuf, so a parser dependency) or the static GTFS timetable as a filler.
 /**
  * Every revenue train the feed names at these platforms, each flagged `mine`
- * when it actually serves the destination. The station list shows all of them
- * and the ruler draws all of them, so the filter is a flag rather than a drop -
- * the wrong-branch train below the axis is the whole point of the ruler.
+ * when it actually serves the destination. The board shows all of them at your
+ * platform, so the filter is a flag rather than a drop - the half-lit wrong-branch
+ * row is what answers "is anything moving at all".
  */
 export async function platformTrains(cache, originCodes, destCodes, list) {
   const { Trains } = await http(`/StationPrediction.svc/json/GetPrediction/${originCodes.join(",")}`);
@@ -384,16 +384,17 @@ export async function loadSchedule(from, to) {
   return schedule;
 }
 
-// At most this many scheduled rows. They are there to answer "when is the next one
-// I can actually catch", and two answers that question; ten of them would turn the
-// board into a timetable and stretch the axis for no gain.
-const SCHED_ROWS = 2;
+// At most this many scheduled rows. Enough to fill the board's 30 minute window at
+// a rush hour headway; past that the board drops them anyway, so a larger cap only
+// buys rows nobody sees. The old ruler took two, because two marks were all its
+// axis had room for - a list has no such limit.
+const SCHED_ROWS = 6;
 
 /**
  * The scheduled departures past the live window, as extra `mine` rows.
  *
- * Scheduled rows are mine-only on purpose: a scheduled wrong-branch train lengthens
- * the axis and adds noise for zero value. Live rows still show every train.
+ * Scheduled rows are mine-only on purpose: a scheduled wrong-branch train is noise
+ * on a board you read to catch a specific train. Live rows still show every train.
  *
  * Where the two sources overlap the prediction feed wins, because it is the more
  * accurate one and it is what the platform sign is showing. nextScheduled owns that

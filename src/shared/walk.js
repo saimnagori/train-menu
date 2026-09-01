@@ -18,7 +18,7 @@ import { LINE_COLORS } from "./parse.js";
 export function walkModel(trains, walk = 0) {
   const minutes = Number.isFinite(walk) && walk > 0 ? walk : 0;
   // eta is null for "---", "" and a missing Min. Those cannot be compared with a
-  // walk any more than they can be placed on an axis, so they are neither missed
+  // walk any more than they can be sorted by minute, so they are neither missed
   // nor catchable - they stay in the station list carrying no verdict.
   const reachable = (train) => train.mine && Number.isFinite(train.eta) && train.eta >= minutes;
   const rows = trains.map((train) => ({

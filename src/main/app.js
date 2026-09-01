@@ -6,8 +6,8 @@ import { popoverBounds } from "./bounds.js";
 import { isConfigured, readConfig, writeConfig } from "./config.js";
 import { INK_DARK, INK_LIGHT, renderTray } from "./tray-image.js";
 import { relativeAge } from "../shared/alerts.js";
+import { boardList } from "../shared/board.js";
 import { parseAlerts, parsePayload, parseSchedule } from "../shared/parse.js";
-import { rulerModel } from "../shared/ruler.js";
 import { listStations } from "../shared/stations.js";
 import { walkModel, walkTitle } from "../shared/walk.js";
 
@@ -131,16 +131,17 @@ function snapshot() {
     title: walkTitle(walk, lastGood?.title ?? { line: "", color: "", mins: "" }),
     note: lastGood?.note ?? "",
     // Every revenue train at the platform, each flagged whether it serves the
-    // trip and whether the walk has already taken it. The ruler and the station
-    // list are two readings of this one list.
+    // trip and whether the walk has already taken it. The menu bar, the hero and
+    // the departure list are three readings of this one list.
     platform: walk.trains,
     // Minutes until you have to move for the train the title names. Null when no
     // walk is set, and when the walk is longer than every train in the feed - the
     // popover then falls back to reporting the next train.
     leaveIn: walk.leaveIn,
-    // Placement is computed here rather than in the renderer: the renderer is a
-    // plain script with no bundler, so it cannot import the tested module.
-    ruler: rulerModel(walk.trains, walk.walk),
+    // Which of those rows the board draws, and in what order. Computed here rather
+    // than in the renderer: the renderer is a plain script with no bundler, so it
+    // cannot import the tested module.
+    list: boardList(walk.trains),
     fetchedAt: lastGood?.fetchedAt ?? 0,
     arriveAt: arriveAt(walk.target),
     // The chips report the lines the check actually ran against, so the filter
@@ -347,7 +348,14 @@ function createPopover() {
     alwaysOnTop: true,
     skipTaskbar: true,
     roundedCorners: true,
-    backgroundColor: "#0B0B0C",
+    // The ground is painted in CSS so the opacity setting can move it, which means
+    // the window itself must let the desktop through: an opaque native window makes
+    // a CSS alpha a no-op. `vibrancy` is what keeps text legible over a busy
+    // desktop - the blur, not the tint, is doing the work - and it is also why the
+    // 0% setting is readable at all rather than raw wallpaper behind the type.
+    transparent: true,
+    vibrancy: "popover",
+    backgroundColor: "#00000000",
     webPreferences: { preload: join(import.meta.dirname, "..", "preload", "index.cjs") },
   });
   popover.loadFile(join(import.meta.dirname, "..", "renderer", "popover.html"));

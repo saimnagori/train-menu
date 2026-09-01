@@ -114,7 +114,16 @@ assert.equal(colorOf(undefined), "");
 console.log("ok");
 
 // --- config ---
-import { normalizeConfig, isConfigured, DEFAULT_REFRESH_SEC, MIN_REFRESH_SEC, MAX_REFRESH_SEC, DEFAULT_BRIGHTNESS } from "../src/main/config.js";
+import {
+  normalizeConfig,
+  isConfigured,
+  DEFAULT_REFRESH_SEC,
+  MIN_REFRESH_SEC,
+  MAX_REFRESH_SEC,
+  DEFAULT_BRIGHTNESS,
+  DEFAULT_OPACITY,
+  DEFAULT_TEXT_PX,
+} from "../src/main/config.js";
 import { DEFAULT_TRAY_STYLE } from "../src/main/tray-image.js";
 
 assert.deepEqual(normalizeConfig({ from: " Central ", to: "Airport", refreshSec: "45", apiKey: " k " }), {
@@ -125,6 +134,8 @@ assert.deepEqual(normalizeConfig({ from: " Central ", to: "Airport", refreshSec:
   style: DEFAULT_TRAY_STYLE,
   brightness: DEFAULT_BRIGHTNESS,
   walkMin: 0,
+  textPx: DEFAULT_TEXT_PX,
+  opacity: DEFAULT_OPACITY,
 });
 // The menu bar style comes from the same hand-editable file: an unknown value
 // would render no readout at all, so it falls back instead.

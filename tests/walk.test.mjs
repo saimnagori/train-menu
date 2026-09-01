@@ -52,7 +52,7 @@ assert.deepEqual(walkTitle(beyond, FALLBACK), FALLBACK, "no catchable train fall
 
 // BRD and ARR are eta 0: real trains, on the platform now, and gone the moment a
 // walk exists. "---" and a missing Min have no eta at all, so they can no more
-// carry a verdict than they can take a position on the ruler.
+// carry a verdict than they can take a position in a list sorted by minute.
 const edge = walkModel([t(0, "OR", true, "BRD"), { eta: null, wait: "--", line: "SV", mine: true }, t(9, "OR", true)], 5);
 assert.deepEqual(
   edge.trains.map((train) => [train.wait, train.missed, train.target]),
@@ -63,8 +63,8 @@ assert.deepEqual(
   ],
 );
 
-// The rows are copies: a walk must never mutate the payload the tray, the ruler
-// and the station list all read.
+// The rows are copies: a walk must never mutate the payload the tray, the hero
+// and the departure list all read.
 const rows = board();
 walkModel(rows, 5);
 assert.deepEqual(rows, board(), "walkModel does not touch its input");
