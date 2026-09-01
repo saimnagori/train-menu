@@ -34,9 +34,24 @@ const cacheFile = () => join(cacheDir(), "train-menu-wmata.json");
 const scheduleFile = () => join(cacheDir(), "train-menu-schedule.json");
 const gtfsZip = () => join(cacheDir(), "train-menu-gtfs.zip");
 
+// The free tier allows ten calls a second, and sequential fetches are faster than
+// that: a cold route asks for a ride time per terminus and the burst came back 429.
+// One gate rather than a retry - a retry would spend the 15s the host allows the
+// whole run, and being killed loses the cache write that stops the next run
+// repeating the burst. A warm refresh is one call and never waits.
+const MIN_CALL_GAP_MS = 125;
+let nextCallAt = 0;
+async function throttle() {
+  const wait = nextCallAt - Date.now();
+  // Claimed before the await, so concurrent callers queue behind each other.
+  nextCallAt = Math.max(nextCallAt, Date.now()) + MIN_CALL_GAP_MS;
+  if (wait > 0) await new Promise((resolve) => setTimeout(resolve, wait));
+}
+
 async function fetchJson(path, params) {
   const url = new URL(API + path);
   if (params) url.search = new URLSearchParams(params).toString();
+  await throttle();
   const res = await fetch(url, {
     headers: { api_key: process.env.WMATA_API_KEY ?? "" },
     signal: AbortSignal.timeout(HTTP_TIMEOUT_MS),
@@ -109,7 +124,18 @@ export async function stationList(cache, now = Date.now()) {
   return listStations(cache);
 }
 
-// {stationCode: SeqNum} along one line. Cached forever - track geometry does not change.
+// {stationCode: SeqNum} for whatever jPath returns. Cached forever - track geometry
+// does not change.
+//
+// Non-empty means "these two are on one line", and that is ALL this is read for.
+// jPath is not a path and its SeqNum is not travel order: Rosslyn -> New Carrollton
+// comes back as all 26 Orange stations, the Virginia branch *behind* Rosslyn
+// included, numbered straight through - which is how Clarendon (17) read as "after"
+// Rosslyn (1) on an eastbound train and a New Carrollton train got flagged as
+// serving a westbound trip. It under-reports too: Court House -> New Carrollton
+// omits Rosslyn and the whole DC trunk the train actually runs through. It behaves
+// like a slice of the agency's internal per-line station array, which is in neither
+// direction's order. `serves` decides direction from the timetable instead.
 export async function pathSeq(cache, origin, terminus) {
   const paths = (cache.paths ??= {});
   const key = `${origin}>${terminus}`;
@@ -126,11 +152,36 @@ export async function pathSeq(cache, origin, terminus) {
   return seq;
 }
 
-/** Does a train on platform `origin` bound for `terminus` stop at one of `dests`, later on? */
+// Slack on the triangle test below. RailTime is a scheduled average per pair, so
+// two legs and the direct ride are separately rounded and need not add up exactly.
+// Backtracking costs twice the leg you double back over, and the shortest leg on
+// the system is 2 minutes, so anything under 4 is safe here.
+const DETOUR_SLACK_MIN = 2;
+
+/**
+ * Does a train on platform `origin` bound for `terminus` stop at one of `dests`?
+ *
+ * The stop list is not in the feed, and jPath does not carry it either (see
+ * pathSeq), so this is answered from the timetable: a destination is *ahead* of
+ * you on this train iff riding via it costs no more than riding straight to the
+ * terminus. Going back for it costs twice the backtrack, and a branch or a
+ * transfer costs more still - neither lands within the slack.
+ *
+ * Fails closed. A missing RailTime leaves the direction unknown, and an unknown
+ * direction must not put someone on a train going the other way - the board then
+ * shows the platform with no train marked as theirs, which is what it already
+ * does at 01:00.
+ */
 export async function serves(cache, origin, dests, terminus) {
-  const seq = await pathSeq(cache, origin, terminus);
-  const here = seq[origin];
-  return here !== undefined && dests.some((d) => seq[d] !== undefined && seq[d] > here);
+  for (const dest of dests) {
+    if (dest === origin) continue;
+    if (dest === terminus) return true; // the train ends where you are going
+    const direct = await rideTime(cache, origin, terminus);
+    const legs = [await rideTime(cache, origin, dest), await rideTime(cache, dest, terminus)];
+    if (!direct || legs.some((leg) => !leg)) continue;
+    if (legs[0] + legs[1] <= direct + DETOUR_SLACK_MIN) return true;
+  }
+  return false;
 }
 
 // jPath is same-line only, so an empty path for every origin platform means the
@@ -222,27 +273,34 @@ export async function platformTrains(cache, originCodes, destCodes, list) {
 
 export const upcoming = async (...args) => (await platformTrains(...args)).filter((t) => t.mine);
 
-// Scheduled average minutes between two stations. Cached per pair forever: it is
-// timetable geometry, not a live figure, which is exactly why the popover shows
-// the arrival as "~09:50" and never styles it as precise.
-export async function railTime(cache, origin, destCodes) {
+// Scheduled average minutes between two stations, or null. Cached per pair forever:
+// it is timetable geometry, not a live figure, which is exactly why the popover shows
+// the arrival as "~09:50" and never styles it as precise. Two callers - the arrival
+// clock and `serves` - so one cache serves both and a warm refresh spends nothing.
+export async function rideTime(cache, origin, dest) {
   const times = (cache.railTimes ??= {});
-  for (const dest of destCodes) {
-    const key = `${origin}>${dest}`;
-    if (!(key in times)) {
-      const { StationToStationInfos } = await http("/Rail.svc/json/jSrcStationToDstStationInfo", {
-        FromStationCode: origin,
-        ToStationCode: dest,
-      });
-      const mins = StationToStationInfos?.[0]?.RailTime;
-      // Only a real figure is cached - this cache never expires, so a zero from
-      // one bad response would pin the arrival clock to "now" forever.
-      if (Number.isFinite(mins) && mins > 0) {
-        times[key] = mins;
-        dirty = true;
-      }
+  const key = `${origin}>${dest}`;
+  if (!(key in times)) {
+    const { StationToStationInfos } = await http("/Rail.svc/json/jSrcStationToDstStationInfo", {
+      FromStationCode: origin,
+      ToStationCode: dest,
+    });
+    const mins = StationToStationInfos?.[0]?.RailTime;
+    // Only a real figure is cached - this cache never expires, so a zero from
+    // one bad response would pin the arrival clock to "now" forever.
+    if (Number.isFinite(mins) && mins > 0) {
+      times[key] = mins;
+      dirty = true;
     }
-    if (times[key]) return times[key];
+  }
+  return times[key] ?? null;
+}
+
+/** The ride to whichever of the destination's platforms the timetable knows. */
+export async function railTime(cache, origin, destCodes) {
+  for (const dest of destCodes) {
+    const mins = await rideTime(cache, origin, dest);
+    if (mins) return mins;
   }
   return null;
 }
@@ -464,37 +522,37 @@ async function main([from, to, dest]) {
   if (!process.env.WMATA_API_KEY) throw new Error("No WMATA API key - add one in Settings");
 
   const cache = await loadCache();
-  const list = await stationList(cache);
-  // Saved before anything that can throw, and again at the end: the host kills
+  // Whatever was learned is written even when the run then fails. The host kills
   // this process with SIGKILL on timeout, so there is no cleanup hook, and a
-  // rejected trip or a slow prediction call would otherwise throw away the
-  // ~200KB station list already paid for - which made a cold start and an
-  // unsupported destination alike re-fetch the whole list every refresh, forever.
-  if (dirty) await saveCache(cache);
-  const originCodes = resolveCodes(list, from);
-  const destCodes = resolveCodes(list, to);
-  if (!(await sameLine(cache, originCodes, destCodes))) {
-    await saveCache(cache); // keep the jPath results that proved it, or we re-prove it every 30s
-    throw new Error(`${from} to ${to} needs a transfer - not supported`);
+  // rejected trip or a call that dies partway would otherwise throw away the
+  // ~200KB station list and the ride times already paid for - so a cold start on
+  // a rate-limited key re-fetched the same burst every 30s and never warmed up.
+  try {
+    const list = await stationList(cache);
+    const originCodes = resolveCodes(list, from);
+    const destCodes = resolveCodes(list, to);
+    if (!(await sameLine(cache, originCodes, destCodes))) {
+      throw new Error(`${from} to ${to} needs a transfer - not supported`);
+    }
+    const trains = await platformTrains(cache, originCodes, destCodes, list);
+    const fetchedAt = Date.now();
+    trains.push(...(await scheduledTail(cache, trains, from, to)));
+    const [next] = trains.filter((t) => t.mine);
+    // One cached call per station pair, ever - and `serves` has usually paid for
+    // this one already. A scheduled train carries no platform code of its own, so
+    // the ride is measured from a live one at the same station, or from the first
+    // origin platform when the feed named nothing.
+    const rideFrom = next?.at ?? trains.find((t) => t.at)?.at ?? originCodes[0];
+    const ride = next && Number.isFinite(next.eta) ? await railTime(cache, rideFrom, destCodes) : null;
+    print(payload({
+      trains,
+      destination: to,
+      fetchedAt,
+      minsToArrival: ride === null ? null : next.eta + ride,
+    }));
+  } finally {
+    if (dirty) await saveCache(cache);
   }
-  if (dirty) await saveCache(cache);
-  const trains = await platformTrains(cache, originCodes, destCodes, list);
-  const fetchedAt = Date.now();
-  trains.push(...(await scheduledTail(cache, trains, from, to)));
-  const [next] = trains.filter((t) => t.mine);
-  // One cached call per station pair, ever - and only once a train exists to
-  // count from, so an empty board spends nothing. A scheduled train carries no
-  // platform code of its own, so the ride is measured from a live one at the same
-  // station, or from the first origin platform when the feed named nothing.
-  const rideFrom = next?.at ?? trains.find((t) => t.at)?.at ?? originCodes[0];
-  const ride = next && Number.isFinite(next.eta) ? await railTime(cache, rideFrom, destCodes) : null;
-  if (dirty) await saveCache(cache);
-  print(payload({
-    trains,
-    destination: to,
-    fetchedAt,
-    minsToArrival: ride === null ? null : next.eta + ride,
-  }));
 }
 
 // pathToFileURL, not `file://${argv[1]}`: the packaged path contains a space
