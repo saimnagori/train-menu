@@ -6,7 +6,7 @@ import { popoverBounds } from "./bounds.js";
 import { isConfigured, readConfig, writeConfig } from "./config.js";
 import { INK_DARK, INK_LIGHT, renderTray } from "./tray-image.js";
 import { relativeAge } from "../shared/alerts.js";
-import { parseAlerts, parsePayload } from "../shared/parse.js";
+import { parseAlerts, parsePayload, parseSchedule } from "../shared/parse.js";
 import { rulerModel } from "../shared/ruler.js";
 import { listStations } from "../shared/stations.js";
 import { walkModel, walkTitle } from "../shared/walk.js";
@@ -21,6 +21,12 @@ const SCRIPT_TIMEOUT_MS = 15_000;
 // Incidents change on the scale of hours, not seconds, and the endpoint is not on
 // the departure path - so its own slow timer rather than a rider on the 30s one.
 const ALERTS_MS = 5 * 60 * 1000;
+// The published timetable changes a few times a year and the feed is a 3.65 MB zip,
+// so this is as slow a timer as the app has. It is off the departure path entirely:
+// the run leaves a cache file behind and a refresh reads it if it is there.
+const SCHEDULE_MS = 12 * 60 * 60 * 1000;
+// The zip download, unlike every other call, is megabytes rather than a JSON page.
+const SCHEDULE_TIMEOUT_MS = 120_000;
 const TRAY_ASSETS = join(import.meta.dirname, "..", "..", "assets", "tray");
 const MARK_PNG = join(TRAY_ASSETS, "train_menuTemplate.png");
 // The plain digits the `flash` style sets, one glyph per cell (see
@@ -39,6 +45,8 @@ let config;
 let configPath;
 let timer;
 let alertTimer;
+let scheduleTimer;
+let scheduled = ""; // the trip the last timetable run was armed with
 let generation = 0; // bumped per refresh; a superseded run must not publish
 let nextAt = 0; // epoch ms of the next scheduled fetch, 0 when nothing is scheduled
 let lastGood = null;
@@ -54,7 +62,7 @@ let popoverHeight = 240;
 let marks = new Map();
 let glyphs = new Map();
 
-function runScript(scriptArgs, parse) {
+function runScript(scriptArgs, parse, timeout = SCRIPT_TIMEOUT_MS) {
   // A .js script runs on Electron's own bundled node: a GUI-launched app inherits
   // a bare PATH (/usr/bin:/bin:/usr/sbin:/sbin), so a `#!/usr/bin/env node`
   // shebang would fail for anyone without node in a system dir.
@@ -67,7 +75,7 @@ function runScript(scriptArgs, parse) {
       file,
       [...args, ...scriptArgs],
       {
-        timeout: SCRIPT_TIMEOUT_MS,
+        timeout,
         killSignal: "SIGKILL",
         env: {
           ...process.env,
@@ -239,6 +247,27 @@ async function checkAlerts() {
   }
 }
 
+// The static timetable behind the scheduled rows. Nothing here reaches the board
+// directly: the run writes its own cache file and the next departure refresh picks
+// it up, so a failure - no network, a rejected key, no unzip - is silent and total,
+// and the board is exactly what it was without the feature.
+async function refreshSchedule() {
+  clearTimeout(scheduleTimer);
+  scheduleTimer = setTimeout(refreshSchedule, SCHEDULE_MS);
+  if (!isConfigured(config)) {
+    scheduled = "";
+    return;
+  }
+  // Recorded before the run, like watching: a failing download must not make every
+  // config save look like a new trip and retry on that cadence.
+  scheduled = `${config.from}>${config.to}`;
+  try {
+    await runScript(["--schedule", config.from, config.to], parseSchedule, SCHEDULE_TIMEOUT_MS);
+  } catch {
+    // The stale cache stays usable, and it is checked against the trip on read.
+  }
+}
+
 async function refresh() {
   if (!isConfigured(config)) {
     // Bump the generation too: clearing the timers does nothing to a run that is
@@ -253,6 +282,8 @@ async function refresh() {
     stale = false;
     clearTimeout(timer);
     clearTimeout(alertTimer);
+    clearTimeout(scheduleTimer);
+    scheduled = "";
     lastGood = null;
     lastAlerts = null;
     watching = [];
@@ -373,6 +404,9 @@ app.whenReady().then(async () => {
     // publishes - long enough that a new style looks like it did not save.
     publish();
     await refresh();
+    // Only when the trip itself changed: the timetable is per station pair, and a
+    // brightness tweak must not pull the feed down again.
+    if (isConfigured(config) && `${config.from}>${config.to}` !== scheduled) refreshSchedule();
     return snapshot();
   });
   ipcMain.on("data:refresh", refresh);
@@ -395,6 +429,9 @@ app.whenReady().then(async () => {
 
   createPopover();
   await refresh();
+  // Not awaited: a cold start has no timetable for the first few seconds, and the
+  // board is exactly today's until it lands.
+  refreshSchedule();
   // setTimeout does not fire while asleep; without this the menu bar shows an
   // hour-old departure the moment the lid opens.
   powerMonitor.on("resume", refresh);

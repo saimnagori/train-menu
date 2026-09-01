@@ -215,6 +215,18 @@
         background: var(--ink-700);
         box-shadow: none;
       }
+      /* From the timetable, not the prediction feed: a hollow stem for a train
+         nobody has seen yet. The `~` on the label already says so in words, and
+         these marks only ever sit past the last live train on the axis. */
+      .pin.sched .stem {
+        background: none;
+        border-left: 1px dashed var(--ink-700);
+        box-shadow: none;
+      }
+      .pin.sched .lab,
+      .pin.sched .sub {
+        color: var(--ink-500);
+      }
       .pin.other {
         top: 43px;
       }
@@ -316,6 +328,12 @@
       }
       table.feedtable tr.go .c-verdict {
         color: var(--signal);
+      }
+      /* Scheduled, not predicted: the same ink as a train that is not yours, so the
+         live rows stay the ones in full ink. The minute keeps its `~`. */
+      table.feedtable tr.sched td,
+      table.feedtable tr.sched .c-min {
+        color: var(--ink-500);
       }
       table.feedtable tr.missed td,
       table.feedtable tr.missed .c-min {
@@ -1300,7 +1318,7 @@
         for (const mark of marks) {
           const pin = node(
             "div",
-            `pin ${mark.mine ? "mine" : "other"}${mark.lift ? " lift" : ""}${mark.missed ? " missed" : ""}`,
+            `pin ${mark.mine ? "mine" : "other"}${mark.lift ? " lift" : ""}${mark.missed ? " missed" : ""}${mark.sched ? " sched" : ""}`,
           );
           pin.style.left = `${mark.pct}%`;
           const lab = node("div", mark.now ? "lab now" : "lab");
@@ -1356,7 +1374,9 @@
             // "gone" and "leave in" are decided in the main process, on the one
             // list all three surfaces read - the row never re-derives them.
             const kind = train.target ? "go" : train.missed ? "missed" : train.mine ? "" : "dim";
-            const row = node("tr", kind);
+            // A timetable row past the live window. Dimmed and prefixed "~": it is
+            // the published minute, not a train the feed has named.
+            const row = node("tr", `${kind}${train.source === "sched" ? " sched" : ""}`.trim());
             row.append(
               node("td", "c-min", bareMin(train.wait)),
               node("td", "c-ln", train.line),

@@ -8,6 +8,10 @@
 // the stretch past the last one is unknown rather than empty. The axis stops at
 // the last train the feed named and the scale labels carry that on their own.
 export const STEP_MIN = 5;
+// A fixed 5 minute step printed ten labels on a 45 minute axis, which only never
+// happened because the live feed cannot reach past about 15 minutes. Scheduled
+// departures can, so the step opens up instead: never more than about seven labels.
+export const scaleStep = (span) => (span <= 15 ? 5 : span <= 30 ? 10 : 15);
 // Two labels closer together than this overlap on a 360px popover, so a run of
 // them alternates rows while each stem stays on its true minute. Above the line
 // the label is two rows tall and wants real clearance; below it a line code over
@@ -27,10 +31,15 @@ function alternate(marks, threshold) {
   }
 }
 
-/** The axis end: the last train the feed named, rounded up to the next step. */
+/**
+ * The axis end: the last train drawn, rounded up to the next step. It must land on
+ * a whole number of steps - the renderer spaces the scale labels evenly and puts a
+ * tick under each, so a span the step does not divide would print ticks that lie.
+ */
 export function rulerSpan(etas) {
   const last = Math.max(0, ...etas.filter((eta) => Number.isFinite(eta)));
-  return Math.max(STEP_MIN, Math.ceil(last / STEP_MIN) * STEP_MIN);
+  const step = scaleStep(Math.ceil(last / STEP_MIN) * STEP_MIN);
+  return Math.max(step, Math.ceil(last / step) * step);
 }
 
 /**
@@ -52,18 +61,25 @@ export function rulerModel(trains, walk = 0) {
       // Set by walkModel: this train leaves before you can reach the platform.
       // The ruler dims it where it stands rather than moving or hiding it.
       missed: Boolean(train.missed),
+      // From the static timetable rather than the prediction feed: drawn hollow,
+      // because it is a scheduled minute and not a train anyone has seen yet.
+      sched: train.source === "sched",
       now: train.eta === 0,
       lift: false,
     }))
     .sort((a, b) => a.eta - b.eta);
 
+  // Collision is a pixel problem on a fixed-width axis, but the thresholds are in
+  // minutes, so they have to grow with the span or a 45 minute axis staggers labels
+  // that are inches apart. At span 10 this is exactly the tuning the mock fixed.
+  const perMin = span / 10;
   // Each side of the axis alternates within its own run: the two sides never
   // collide with each other, and mine wants more clearance than other.
-  alternate(marks.filter((mark) => mark.mine), COLLIDE_MIN);
-  alternate(marks.filter((mark) => !mark.mine), COLLIDE_MIN_OTHER);
+  alternate(marks.filter((mark) => mark.mine), COLLIDE_MIN * perMin);
+  alternate(marks.filter((mark) => !mark.mine), COLLIDE_MIN_OTHER * perMin);
 
   const scale = [];
-  for (let at = 0; at <= span; at += STEP_MIN) scale.push(at === 0 ? "now" : `${at}m`);
+  for (let at = 0; at <= span; at += scaleStep(span)) scale.push(at === 0 ? "now" : `${at}m`);
   // The walk as a share of the axis - the same arithmetic as every mark's
   // position, so the shadow's edge and a mark on that minute land together. A
   // walk longer than the axis covers the whole band, which is the honest reading:

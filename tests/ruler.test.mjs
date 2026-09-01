@@ -2,7 +2,7 @@
 // mock is the visual contract: trains at 3m/6m above the line and 1m/4m below it
 // sit at 30/60/10/40 percent of a 10 minute axis.
 import assert from "node:assert/strict";
-import { rulerModel, rulerSpan, STEP_MIN } from "../src/shared/ruler.js";
+import { rulerModel, rulerSpan, scaleStep, STEP_MIN } from "../src/shared/ruler.js";
 
 const t = (eta, line, mine, wait = eta === 0 ? "BRD" : `${eta}m`) => ({ eta, wait, line, mine });
 
@@ -102,5 +102,37 @@ assert.equal(model.marks.length, 4, "exactly the trains the feed named, nothing 
 // The axis never runs more than one step past the last train, so no long stretch
 // of empty track is drawn for the eye to read as a gap.
 assert.ok(model.span - Math.max(...model.marks.map((m) => m.eta)) < STEP_MIN);
+
+// --- the long axis ---
+// Scheduled departures reach far past the live feed's ~15 minutes, so the step
+// opens up rather than printing ten labels across 360px. Every span must be a
+// whole number of steps: the renderer spaces the labels evenly and puts a tick
+// under each, so a span the step does not divide would draw ticks that lie.
+assert.equal(scaleStep(10), 5);
+assert.equal(scaleStep(20), 10);
+assert.equal(scaleStep(45), 15);
+for (const last of [1, 4, 7, 12, 15, 16, 22, 29, 31, 44, 60]) {
+  const span = rulerSpan([last]);
+  assert.ok(span >= last, `axis ${span} must reach the ${last}m train`);
+  assert.equal(span % scaleStep(span), 0, `span ${span} is not a whole number of ${scaleStep(span)}m steps`);
+  assert.ok(span / scaleStep(span) + 1 <= 7, `span ${span} prints too many labels`);
+}
+assert.deepEqual(rulerModel([t(18, "OR", true)]).scale, ["now", "10m", "20m"]);
+assert.deepEqual(rulerModel([t(42, "OR", true)]).scale, ["now", "15m", "30m", "45m"]);
+
+// Collision is a pixel problem but the thresholds are minutes, so they have to
+// scale with the span. The tuning at span 10 is untouched (the mock's numbers,
+// asserted above); the same 4 minutes is a third of the pixels on a 45 minute
+// axis, so a pair that cleared each other on a short board now collides.
+assert.deepEqual(
+  rulerModel([t(3, "OR", true), t(9, "SV", true)]).marks.map((m) => m.lift),
+  [false, false],
+  "6 minutes of a 10 minute axis is more than half its width",
+);
+assert.deepEqual(
+  rulerModel([t(3, "OR", true), t(9, "SV", true), t(40, "OR", true)]).marks.map((m) => m.lift),
+  [true, false, false],
+  "the same 6 minutes is an eighth of a 45 minute axis, so the labels stagger",
+);
 
 console.log("ok ruler");

@@ -268,11 +268,14 @@ assert.deepEqual(out.platform[0], {
   group: "1",
   terminus: "New Carrollton",
   mine: true,
+  source: "live",
 });
 // Nothing the user rejected may reach the renderer, whatever the feed carries:
-// no car count, no fare, no platform or track number.
+// no car count, no fare, no platform or track number. `at` is the origin platform
+// code the ride time is measured from - working data, not the popover's.
 for (const train of out.platform) {
-  assert.deepEqual(Object.keys(train).sort(), ["eta", "group", "line", "mine", "terminus", "wait"]);
+  assert.deepEqual(Object.keys(train).sort(), ["eta", "group", "line", "mine", "source", "terminus", "wait"]);
+  assert.equal(train.source, "live", "every train the prediction feed named says so");
 }
 
 // An empty board must not parse as a departure - "no trains to X" in the wait

@@ -14,7 +14,7 @@
     "icon": "electron scripts/make-tray-icon.mjs && electron scripts/make-glyph-atlas.mjs && electron scripts/make-app-icon.mjs",
     "package:mac": "rm -rf release && CSC_IDENTITY_AUTO_DISCOVERY=false electron-builder --mac dir --arm64 && node scripts/adhoc-sign-mac-app.mjs \"release/mac-arm64/Train Menu.app\"",
     "dist:mac": "pnpm package:mac && node scripts/create-dmg.mjs \"release/mac-arm64/Train Menu.app\"",
-    "test": "node tests/parse.test.mjs && node tests/wmata.test.mjs && node tests/alerts.test.mjs && node tests/ruler.test.mjs && node tests/walk.test.mjs && node tests/config.test.mjs && node tests/tray-image.test.mjs",
+    "test": "node tests/parse.test.mjs && node tests/wmata.test.mjs && node tests/alerts.test.mjs && node tests/ruler.test.mjs && node tests/gtfs.test.mjs && node tests/walk.test.mjs && node tests/config.test.mjs && node tests/tray-image.test.mjs",
     "stations": "node src/departures/index.js --stations > src/shared/stations.json.tmp && mv src/shared/stations.json.tmp src/shared/stations.json || { rm -f src/shared/stations.json.tmp; exit 1; }"
   },
   "devDependencies": {

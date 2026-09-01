@@ -33,6 +33,9 @@ const codes = (value) => list(value).filter((line) => typeof line === "string");
 // of coercing into an all-defaults board that looks like a quiet morning.
 export const KIND_DEPARTURES = "departures";
 export const KIND_ALERTS = "alerts";
+// The static timetable refresh: a third invocation on a 12 hour timer, whose only
+// job is to leave a cache file behind. Nothing it prints reaches the board.
+export const KIND_SCHEDULE = "schedule";
 
 function envelope(stdout, kind) {
   let raw;
@@ -74,8 +77,22 @@ export function parsePayload(stdout) {
       group: str(train?.group),
       terminus: str(train?.terminus),
       mine: Boolean(train?.mine),
+      // "live" (the prediction feed) or "sched" (the static timetable, past the
+      // live window). Anything else coerces to "live" rather than reaching the
+      // renderer, which styles a scheduled row as the estimate it is.
+      source: str(train?.source) === "sched" ? "sched" : "live",
     })),
   };
+}
+
+/**
+ * The `--schedule` run: same envelope, its own 12 hour cadence. The timetable
+ * itself goes to its own cache file, which the departures run reads - this is only
+ * the host's proof that the refresh happened, so `trips` is a count.
+ */
+export function parseSchedule(stdout) {
+  const raw = envelope(stdout, KIND_SCHEDULE);
+  return { from: str(raw.from), to: str(raw.to), trips: num(raw.trips), refreshedAt: num(raw.refreshedAt) };
 }
 
 /** The separate `--alerts` run: same envelope, its own cadence. */
