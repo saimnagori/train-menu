@@ -44,10 +44,22 @@ pnpm stations        # regenerate the bundled station list (needs a key)
 
 A prediction gives a train's *terminus*, not whether it stops at your
 destination - Rosslyn sends OR/BL/SV toward DC, and SV alternates between Largo
-and New Carrollton. `serves()` fetches the station sequence for
-`origin -> terminus` from the `jPath` endpoint and keeps the train only if your
-destination appears later in that sequence. Track geometry never changes, so
-paths are cached permanently.
+and New Carrollton. `serves()` answers it from the timetable: your destination is
+ahead of you on this train iff riding **via** it costs no more than riding
+straight to the terminus, within two minutes of slack. Rosslyn to Clarendon on a
+New Carrollton train is 5 + 40 against 35 straight through, so it is rejected;
+the Vienna train is 5 + 17 against 22, so it is kept. Going back for a station
+costs twice the backtrack, and a wrong branch or a transfer costs more still -
+across 36 live pairs the true cases all came out at 0 and the nearest false one
+at 6. RailTime is timetable geometry, so pairs are cached permanently.
+
+Not `jPath`, which despite the name is not a path. For Rosslyn -> New Carrollton
+it returns all 26 Orange stations - the Virginia branch *behind* Rosslyn included
+- numbered straight through, so a `SeqNum` comparison put Clarendon after Rosslyn
+on an eastbound train and marked it as one to catch. It under-reports too: Court
+House -> New Carrollton omits Rosslyn and the whole DC trunk the train runs
+through. All it is read for now is "these two are on one line", which is how an
+unsupported transfer trip is still detected.
 
 Same-line trips only; a trip needing a transfer is reported as unsupported.
 

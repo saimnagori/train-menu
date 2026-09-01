@@ -92,11 +92,34 @@ console.log("ok stations");
 
 // --- departures ---
 
+// Real jPath responses, station codes in the agency's own order - NOT travel
+// order, and not the train's stop list either. The idealized fixture that used to
+// live here is why the wrong-direction bug shipped green: the live response for
+// Rosslyn -> New Carrollton carries the Virginia branch behind Rosslyn (K01-K08),
+// numbered as if the train ran through it, and Court House -> New Carrollton omits
+// Rosslyn and the DC trunk the train really does run through. Only "non-empty
+// means one line" is read off these.
+// "D01".."D10" without ten string literals.
+const seq = (letter, from, to) =>
+  Array.from({ length: to - from + 1 }, (_, i) => `${letter}${String(from + i).padStart(2, "0")}`);
+
 const PATHS = {
-  // Rosslyn -> New Carrollton (Orange), -> Largo (Silver), -> Vienna (westbound)
-  "C05>D13": ["C05", "C01", "D01", "D04", "D13"],
-  "C05>G05": ["C05", "C01", "D01", "G05"],
-  "C05>K08": ["C05", "K01", "K08"],
+  "C05>D13": ["C05", "C04", "C03", "C02", "C01", ...seq("D", 1, 10), ...seq("K", 1, 8), "D11", "D12", "D13"],
+  "C05>K02": ["C05", "C04", "C03", "C02", "C01", ...seq("D", 1, 10), "K01", "K02"],
+  "C05>G05": ["C05", "C04", "C03", "C02", "C01", ...seq("D", 1, 8), "J02", "J03", ...seq("G", 1, 5)],
+  "C05>K08": ["C05", "C04", "C03", "C02", "C01", ...seq("D", 1, 10), ...seq("K", 1, 8)],
+  "K01>D13": [...seq("K", 1, 8), "D11", "D12", "D13"],
+};
+
+// Real RailTime figures (jSrcStationToDstStationInfo), the scheduled average per
+// pair. What `serves` reads direction off: the legs of a ride that goes the way
+// you are going add up to the direct ride, and going back for a station costs
+// twice the backtrack.
+const RIDES = {
+  "C05>D13": 35, "C05>K02": 5, "C05>K08": 22, "C05>G05": 36, "C05>N12": 56, "C05>D04": 14,
+  "D13>K08": 57, "D13>G05": 34, "D04>D13": 21, "D04>K08": 36, "D04>G05": 22,
+  "K02>D13": 40, "K02>K08": 17, "K02>N12": 51, "K02>G05": 41, "K02>C05": 5,
+  "N12>K08": 59, "G05>D13": 34,
 };
 // Shapes copied from real GetPrediction/C05 output, including the two quirks that
 // live data exposed: a revenue train with a null DestinationCode and only an
@@ -135,8 +158,8 @@ setFetch(async (path, params) => {
     return { Path: seq.map((StationCode, SeqNum) => ({ StationCode, SeqNum })) };
   }
   if (path.includes("jSrcStationToDstStationInfo")) {
-    // The live figure for C05 -> D13. Anything else is a pair we never ask for.
-    const time = `${params.FromStationCode}>${params.ToStationCode}` === "C05>D13" ? 35 : 0;
+    // A pair the timetable does not know comes back as a zero, not an error.
+    const time = RIDES[`${params.FromStationCode}>${params.ToStationCode}`] ?? 0;
     return { StationToStationInfos: [{ RailTime: time }] };
   }
   if (path.includes("Incidents")) return { Incidents: INCIDENTS };
@@ -150,6 +173,26 @@ assert.equal(await serves(seen, "C05", ["D13"], "G05"), false, "Silver to Largo 
 assert.equal(await serves(seen, "C05", ["D13"], "K08"), false, "westbound must not count");
 assert.equal(await serves(seen, "C05", ["D13"], "Z99"), false, "unknown terminus must not count");
 assert.equal(await serves(seen, "C05", ["D04"], "D13"), true, "a mid-route destination counts");
+
+// The wrong-direction regression. Rosslyn -> Clarendon is westbound, and every
+// eastbound terminus appears "later" than Rosslyn in the jPath response above -
+// which is what put a New Carrollton train on a Clarendon board. Direction is the
+// timetable's answer now: 5 + 40 to go via Clarendon against 35 straight through.
+assert.equal(await serves(seen, "C05", ["K02"], "D13"), false, "eastbound train, westbound destination");
+assert.equal(await serves(seen, "C05", ["K02"], "G05"), false, "eastbound branch, westbound destination");
+assert.equal(await serves(seen, "C05", ["K02"], "K08"), true, "Vienna train serves Clarendon");
+assert.equal(await serves(seen, "C05", ["K02"], "N12"), true, "Ashburn train serves Clarendon");
+// And the same trip read the other way: back down the branch, both eastbound
+// termini serve Rosslyn, the westbound one does not.
+assert.equal(await serves(seen, "K02", ["C05"], "D13"), true, "Clarendon -> Rosslyn on a New Carrollton train");
+assert.equal(await serves(seen, "K02", ["C05"], "G05"), true, "Clarendon -> Rosslyn on a Largo train");
+assert.equal(await serves(seen, "K02", ["C05"], "K08"), false, "Clarendon -> Rosslyn on a Vienna train");
+// Same direction out of the station, wrong branch past the split.
+assert.equal(await serves(seen, "C05", ["N12"], "K08"), false, "Vienna train does not reach Ashburn");
+assert.equal(await serves(seen, "C05", ["G05"], "D13"), false, "New Carrollton train does not reach Largo");
+// Fails closed: no ride time is an unknown direction, and an unknown direction
+// must not put someone on a train going the other way.
+assert.equal(await serves({}, "C05", ["A99"], "D13"), false, "an unpriced pair is not yours");
 
 // Min is a string: never a fake number, never a crash.
 assert.deepEqual(["BRD", "ARR", "7", "---", "", null].map(etaOf), [0, 0, 7, null, null, null]);
@@ -190,10 +233,14 @@ assert.deepEqual(calls, ["/StationPrediction.svc/json/GetPrediction/C05"], "path
 // --- the arrival estimate ---
 
 // RailTime is a scheduled average, so it is fetched once per station pair and
-// cached forever, and the popover prints it with a tilde.
+// cached forever, and the popover prints it with a tilde. One cache for two
+// readers: `serves` has already priced the trip, so the arrival clock is free.
 calls = [];
 assert.equal(await railTime(warm, "C05", ["D13"]), 35);
-assert.equal(await railTime(warm, "C05", ["D13"]), 35);
+assert.deepEqual(calls, [], "the direction check already paid for this pair");
+const cold = {};
+assert.equal(await railTime(cold, "C05", ["D13"]), 35);
+assert.equal(await railTime(cold, "C05", ["D13"]), 35);
 assert.deepEqual(calls, ["/Rail.svc/json/jSrcStationToDstStationInfo"], "cached per pair, forever");
 // A zero is not a ride time. Caching it would pin the arrival clock to "now"
 // forever, since this cache never expires.
