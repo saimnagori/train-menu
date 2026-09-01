@@ -11,8 +11,33 @@
     <style>
       /* Monochrome Lab. Tokens come from tokens.css - no hardcoded colours here
          except the WMATA line hues, which are agency data, not brand colour. */
+
+      :root {
+        /* --bg-stage as channels, so the ground can carry an alpha. The hex token
+           stays the source of truth for everything that wants it flat. */
+        --stage-rgb: 11, 11, 12;
+      }
+      /* The type knob. Every size on this surface is a rem off the root, so one
+         declaration moves the whole board and nothing has to be told twice. 14 is
+         the size the tokens were drawn at, and what tokens.css already resolves to
+         (0.875rem of the 16px initial value), so the default renders identically to
+         before the setting existed. */
+      html {
+        font-size: calc(var(--text-px, 14) * 1px);
+        /* tokens.css paints the root with the flat stage colour, and the root's
+           background is what becomes the window canvas - so an alpha on <body>
+           was being composited over an opaque ground and the opacity setting did
+           nothing. Exactly one element may paint the ground, and it is <body>. */
+        background: transparent;
+      }
+
       body {
-        background: var(--bg-stage);
+        /* Painted here, not by the window, so the opacity setting can move it: the
+           BrowserWindow is transparent with vibrancy behind it (see app.js), and the
+           blur is what keeps this legible over a busy desktop. The inset ring stands
+           in for the window edge, which a transparent window no longer draws. */
+        background: rgba(var(--stage-rgb), var(--pop-alpha, 0.9));
+        box-shadow: inset 0 0 0 1px var(--ink-800);
         border-radius: var(--radius-xl);
         overflow: hidden;
         user-select: none;
@@ -28,13 +53,19 @@
         border-bottom: 1px solid var(--line);
         -webkit-app-region: drag;
       }
-      .mark {
+      /* The trip, in the chrome. It is the one thing the list cannot say for itself,
+         and it takes the place of the app's own name - nobody standing at Rosslyn
+         needs told which app they just clicked. */
+      .trip {
         font-size: var(--fs-xxs);
-        letter-spacing: 0.22em;
+        letter-spacing: var(--tracking-caps);
         text-transform: uppercase;
         color: var(--ink-200);
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
       }
-      .mark .sep {
+      .trip .sep {
         color: var(--signal);
       }
       .controls {
@@ -74,141 +105,15 @@
         padding: var(--space-6);
       }
 
-      /* --- Hero: next departure --- */
-      .hero {
-        display: flex;
-        align-items: baseline;
-        gap: var(--space-4);
-      }
-      .hero .value {
-        font-size: var(--fs-3xl);
-      }
-      .hero .toward {
-        font-size: var(--fs-xs);
-        color: var(--ink-400);
-        margin-left: auto;
-        text-align: right;
-      }
-      /* RailTime is a scheduled average, so the clock keeps its tilde and is
-         never styled as precise. */
-      .hero .clock {
-        color: var(--ink-200);
-        font-variant-numeric: tabular-nums;
-      }
-      .route {
-        margin-top: var(--space-3);
-        font-size: var(--fs-xxs);
-        letter-spacing: var(--tracking-caps);
-        text-transform: uppercase;
-        color: var(--ink-500);
-      }
-
-      /* --- The minute ruler ---
-         Your trains above the axis, every other train at the platform below it,
-         each at the Min the feed gave. The axis ends at the last train named and
-         the scale labels carry that, so there is no horizon to explain. */
-      .ruler {
-        margin-top: var(--space-6);
-      }
-      .track {
-        position: relative;
-        /* Tall enough that the below-line labels clear the scale row. */
-        height: 74px;
-      }
-      /* Only when two trains below the line share a minute and one label has to
-         drop a row - the extra height is not paid for the usual board. */
-      .track.deep {
-        height: 96px;
-      }
-      .track .axis {
-        position: absolute;
-        left: 0;
-        right: 0;
-        top: 40px;
-        height: 1px;
-        background: var(--line);
-      }
-      .track .tick {
-        position: absolute;
-        top: 35px;
-        width: 1px;
-        height: 11px;
-        background: var(--ink-800);
-      }
-      .pin {
-        position: absolute;
-        transform: translateX(-50%);
-        text-align: center;
-      }
-      .pin.mine {
-        top: 14px;
-      }
-      /* Two trains a few minutes apart would collide - every other label lifts a
-         row while its stem still lands on the true minute. */
-      .pin.mine.lift {
-        top: 0;
-      }
-      .pin.mine.lift .stem {
-        height: 26px;
-      }
-      .pin.mine .lab {
-        font-size: var(--fs-xs);
-        font-variant-numeric: tabular-nums;
-        line-height: 1.1;
-        color: var(--ink-100);
-      }
-      .pin.mine .sub {
-        font-size: 0.625rem;
-        color: var(--ink-500);
-      }
-      .pin.mine .stem {
-        width: 1px;
-        height: 12px;
-        margin: 0 auto;
-        background: var(--signal);
-        box-shadow: var(--signal-glow);
-      }
-      .pin.other {
-        top: 43px;
-      }
-      .pin.other .stem {
-        width: 1px;
-        height: 8px;
-        margin: 0 auto;
-        background: var(--ink-700);
-      }
-      /* The mirror of the lift above the line: the stem grows, so the label drops
-         a row while the mark still lands on its true minute. */
-      .pin.other.lift .stem {
-        height: 30px;
-      }
-      .pin.other .lab {
-        font-size: 0.625rem;
-        line-height: 1.4;
-        color: var(--ink-600);
-      }
-      /* BRD and ARR are not minutes: they take the left edge and are named as
-         themselves, tinted as the one signal colour. */
-      .pin .lab.now {
-        color: var(--signal);
-      }
-      .scale {
-        display: flex;
-        justify-content: space-between;
-        margin-top: var(--space-2);
-        font-size: 0.625rem;
-        letter-spacing: 0.1em;
-        color: var(--ink-600);
-      }
-
-      /* --- The station list ---
-         Minutes, line, destination. The stamp is the freshness proof: a frozen
-         feed shows as an old clock rather than a countdown ticking over stale
-         numbers. */
+      /* --- The departure list ---
+         One column of minutes, soonest first, live rows and timetable rows in the
+         same list because that is the order you leave the house in. The stamp is
+         the freshness proof: a frozen feed shows as an old clock rather than a
+         countdown ticking over stale numbers. */
+      /* First and only thing in the body now, so there is nothing above it to be
+         divided from. */
       .feed {
-        margin-top: var(--space-6);
-        padding-top: var(--space-5);
-        border-top: 1px solid var(--line-faint);
+        margin-top: 0;
       }
       .feedhead {
         display: flex;
@@ -235,36 +140,143 @@
       table.feedtable {
         width: 100%;
         border-collapse: collapse;
-        font-size: var(--fs-xs);
         font-variant-numeric: tabular-nums;
       }
       table.feedtable td {
-        padding: var(--space-2) 0;
+        padding: var(--space-3) 0;
+        border-bottom: 1px solid var(--ink-900);
+        vertical-align: baseline;
         color: var(--ink-300);
       }
-      table.feedtable .c-min {
-        width: 4ch;
+      table.feedtable tr:last-child td {
+        border-bottom: 0;
+      }
+      /* The minute is the thing you read, so it is the only large number on the
+         row and it is the leftmost column - one ragged-right scan down the list,
+         no hunting across the width. */
+      .feedtable .c-min {
+        width: 5ch;
+        font-size: var(--fs-lg);
+        font-weight: var(--weight-light);
+        letter-spacing: var(--tracking-value);
         color: var(--ink-100);
       }
-      table.feedtable .c-ln {
-        width: 4ch;
+      .feedtable .c-min .u {
+        font-size: var(--fs-xxs);
+        letter-spacing: 0;
         color: var(--ink-500);
       }
-      table.feedtable tr.dim td {
+      .feedtable .c-dot {
+        width: 14px;
+      }
+      /* .dot is sized as a flex item everywhere else on this surface; in a table
+         cell it is an inline span, where width is ignored and it draws nothing. */
+      .feedtable .c-dot .dot {
+        display: inline-block;
+      }
+      .feedtable .c-ln {
+        width: 4ch;
+        font-size: var(--fs-xs);
+        color: var(--ink-400);
+      }
+      /* One line, always. A wrapped terminus turns a scan into reading, and bigger
+         type is exactly when it starts wrapping. */
+      .feedtable .c-to {
+        font-size: var(--fs-xs);
+        color: var(--ink-200);
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        max-width: 0;
+      }
+      /* One right-hand column, one meaning, all the way down: when this train leaves
+         the platform. No word ever takes its place - the verdicts have their own
+         line, where they cost the clock nothing. */
+      .feedtable .c-clock {
+        width: 7ch;
+        padding-left: var(--space-4);
+        text-align: right;
+        white-space: nowrap;
+        font-size: var(--fs-xs);
+        color: var(--ink-500);
+      }
+      /* What this train is to you, under the train it is about: "leave in Nm ·
+         arrive ~HH:MM" on the one you are being sent for, "gone" on the one the walk
+         has already taken. Only those two rows have anything to say, and being on
+         the row means the verdict and its train cannot be read apart. */
+      .feedtable tr.said td {
+        padding-bottom: var(--space-1);
+        border-bottom: 0;
+      }
+      .feedtable tr.answer td {
+        padding-top: 0;
+        font-size: 0.625rem;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+        color: var(--signal);
+      }
+      .feedtable tr.answer .tail {
+        color: var(--ink-500);
+      }
+      /* A verdict about a train you cannot have is not a signal. Same line, same
+         place, one step darker than the row it belongs to. */
+      .feedtable tr.answer.past td {
         color: var(--ink-600);
       }
-      table.feedtable tr.dim .c-min {
+      /* The train you are being told to leave for: the brightest row on the board,
+         every cell of it. Nothing else on the list is at full ink, so the eye lands
+         here before it reads anything. */
+      .feedtable tr.go .c-min,
+      .feedtable tr.go .c-ln,
+      .feedtable tr.go .c-to,
+      .feedtable tr.go .c-clock {
+        color: var(--ink-100);
+      }
+      .feedtable tr.go .dot {
+        box-shadow: 0 0 6px currentColor;
+      }
+      /* Scheduled, not predicted: one step of ink back, and never the signal
+         colour. The minute keeps its `~` - it is a published time, not a train
+         anyone has seen. */
+      .feedtable tr.sched .c-min {
+        color: var(--ink-300);
+      }
+      /* Unreachable inside the walk. It keeps its true minute and its place in the
+         order - dimmed, never dropped, never re-sorted. */
+      .feedtable tr.missed .c-min,
+      .feedtable tr.missed .c-to,
+      .feedtable tr.missed .c-ln,
+      .feedtable tr.missed .c-clock {
+        color: var(--ink-600);
+      }
+      .feedtable tr.missed .dot {
+        opacity: 0.35;
+      }
+      /* Another line off the same platform: real, and the answer to "is anything
+         moving at all", but not a train that takes you where you asked. */
+      .feedtable tr.other .c-min {
+        font-size: var(--fs-sm);
         color: var(--ink-500);
       }
-      table.feedtable tr.group td {
-        padding-top: var(--space-4);
+      .feedtable tr.other .c-to,
+      .feedtable tr.other .c-ln,
+      .feedtable tr.other .c-clock {
+        color: var(--ink-500);
+      }
+      /* Why the list is empty, in the list rather than in an empty box. */
+      .feedtable tr.quiet td {
+        border-bottom: 0;
+        font-size: var(--fs-xs);
+        color: var(--ink-500);
+      }
+      /* The walk, named once, under the trains it applies to. */
+      .feedfoot {
+        display: flex;
+        align-items: center;
+        gap: var(--space-3);
+        margin-top: var(--space-4);
         font-size: 0.625rem;
-        letter-spacing: 0.12em;
-        text-transform: uppercase;
-        /* The faintest TEXT step, not ink-700: that is a divider token, and this
-           label reading it at 12% white made it the hardest thing on the board.
-           Text belongs on the text scale, which is also the only scale the
-           brightness setting moves. */
+        letter-spacing: 0.06em;
         color: var(--ink-600);
       }
 
@@ -467,6 +479,12 @@
       input::placeholder {
         color: var(--ink-faint);
       }
+      /* The stepper is macOS chrome on a surface that has none of it, and the
+         field is three keystrokes wide anyway. */
+      input[type="number"]::-webkit-inner-spin-button {
+        appearance: none;
+        margin: 0;
+      }
 
       /* --- Brightness slider ---
          A 1px hairline track with a mint dot for a thumb and a 1px mint fill
@@ -502,6 +520,16 @@
         background: var(--signal);
         box-shadow: var(--signal-glow);
       }
+      /* A one-line gloss under a field, for the setting whose off switch is a
+         value rather than a control. */
+      .sublabel {
+        margin-top: var(--space-3);
+        font-size: var(--fs-xxs);
+        letter-spacing: var(--tracking-caps);
+        text-transform: uppercase;
+        color: var(--ink-600);
+      }
+      .field .unit,
       .field.range .unit {
         flex: 0 0 auto;
         width: 4ch;
@@ -734,7 +762,7 @@
   </head>
   <body>
     <header>
-      <div class="mark">Train<span class="sep">·</span>Menu</div>
+      <div class="trip" id="trip">Train<span class="sep">·</span>Menu</div>
       <div class="controls">
         <button class="icon" id="doRefresh" title="Refresh">
           <!-- Lucide RotateCw -->
@@ -757,33 +785,22 @@
     <main>
       <!-- Departures -->
       <section id="board" hidden>
-        <div class="hero">
-          <span class="dot" id="heroDot"></span>
-          <span class="code" id="heroCode"></span>
-          <div class="value" id="heroMins">--</div>
-          <div class="toward">
-            <div id="heroToward"></div>
-            <div class="clock" id="heroArrive"></div>
-          </div>
-        </div>
-        <div class="route" id="route"></div>
-
-        <!-- The ruler: axis from now to the last train the feed named. -->
-        <div class="ruler" id="ruler" hidden>
-          <div class="track" id="track"></div>
-          <div class="scale" id="scale"></div>
-        </div>
-
-        <!-- Every train in the feed at this station, both directions. -->
-        <div class="feed" id="feed" hidden>
+        <!-- The departures that reach your destination in the near term, live rows
+             and timetable rows in one list, soonest first. There is no hero above
+             it: the list already answers every question one did, and the trip it is
+             for is named in the header. -->
+        <div class="feed" id="feed">
           <div class="feedhead">
-            <span class="live"></span>
+            <span class="live" id="feedLive"></span>
             <span id="feedCount"></span>
             <span class="stamp" id="feedStamp"></span>
           </div>
           <table class="feedtable">
             <tbody id="feedRows"></tbody>
           </table>
+          <div class="feedfoot">
+            <span id="feedMine"></span>
+          </div>
         </div>
 
         <!-- Alerts, filtered to the lines that carry the trip. Absent, not
@@ -857,11 +874,38 @@
               <div class="styles" id="styles" role="radiogroup" aria-label="menu bar style"></div>
             </label>
             <label>
+              <div class="label">Walk to platform</div>
+              <div class="field">
+                <span class="prompt">&rsaquo;</span
+                ><input id="walkMin" type="number" min="0" max="60" step="1" inputmode="numeric" placeholder="0" /><span
+                  class="unit"
+                  >min</span
+                >
+              </div>
+              <div class="sublabel">0 turns the walk off</div>
+            </label>
+            <label>
               <div class="label">Brightness</div>
               <div class="field range">
                 <input id="brightness" type="range" min="0" max="100" step="5" aria-label="brightness" />
                 <span class="unit" id="brightnessOut"></span>
               </div>
+            </label>
+            <label>
+              <div class="label">Text size</div>
+              <div class="field range">
+                <input id="textPx" type="range" min="12" max="16" step="1" aria-label="text size" />
+                <span class="unit" id="textPxOut"></span>
+              </div>
+              <div class="sublabel">14 is standard · two either side</div>
+            </label>
+            <label>
+              <div class="label">Opacity</div>
+              <div class="field range">
+                <input id="opacity" type="range" min="0" max="100" step="5" aria-label="opacity" />
+                <span class="unit" id="opacityOut"></span>
+              </div>
+              <div class="sublabel">100 turns the see-through off</div>
             </label>
           </div>
         </form>
@@ -899,7 +943,7 @@
 
       // --- Brightness ---
       // One number lifts the dim end of the ink scale toward white. A single
-      // exponent beats a table of exceptions: at 100 the hero numbers go 96% ->
+      // exponent beats a table of exceptions: at 100 the minute column goes 96% ->
       // 98% (invisible) while the faintest text goes 22% -> 50%, and the order of
       // the steps holds at every setting, so no position can flatten the board's
       // hierarchy. Only these six TEXT steps move - dividers, hairlines, the mint
@@ -907,7 +951,11 @@
       //
       // The base alphas must match the six --ink-N steps in tokens.css: this is a
       // plain script with no bundler, so it cannot read them from source.
-      const DEFAULT_BRIGHTNESS = 50; // keep in step with ../main/config.js
+      // All three keep in step with ../main/config.js - a plain script with no
+      // bundler cannot import them.
+      const DEFAULT_BRIGHTNESS = 50;
+      const DEFAULT_TEXT_PX = 14;
+      const DEFAULT_OPACITY = 90;
       const INK_STEPS = [
         ["ink-100", 0.96],
         ["ink-200", 0.86],
@@ -926,13 +974,33 @@
         }
       }
 
-      // Live while dragging, so the board behind the form is the preview.
-      function paintBrightness() {
-        const slider = el("brightness");
-        slider.style.setProperty("--fill", `${slider.value}%`);
-        el("brightnessOut").textContent = slider.value;
-        applyBrightness(slider.value);
+      // The other two knobs. One declaration each: every size on the surface is a
+      // rem off the root, and the ground is the only thing carrying an alpha.
+      function applyTextPx(value) {
+        const px = Math.min(Math.max(Math.round(Number(value) || 0) || DEFAULT_TEXT_PX, 12), 16);
+        document.documentElement.style.setProperty("--text-px", px);
       }
+
+      function applyOpacity(value) {
+        const pct = Math.min(Math.max(Number(value) || 0, 0), 100);
+        document.documentElement.style.setProperty("--pop-alpha", (pct / 100).toFixed(2));
+      }
+
+      // Live while dragging, so the board behind the form is the preview. The fill
+      // is the mint run of track to the left of the thumb, in the slider's own
+      // units - a range that does not start at 0 would otherwise fill from 0.
+      function paintRange(id, out, apply, suffix = "") {
+        const slider = el(id);
+        const span = Number(slider.max) - Number(slider.min);
+        const pct = span ? ((Number(slider.value) - Number(slider.min)) / span) * 100 : 0;
+        slider.style.setProperty("--fill", `${pct}%`);
+        el(out).textContent = `${slider.value}${suffix}`;
+        apply(slider.value);
+      }
+
+      const paintBrightness = () => paintRange("brightness", "brightnessOut", applyBrightness);
+      const paintTextPx = () => paintRange("textPx", "textPxOut", applyTextPx, "pt");
+      const paintOpacity = () => paintRange("opacity", "opacityOut", applyOpacity, "%");
 
       function renderStyles() {
         el("styles").replaceChildren(
@@ -1108,9 +1176,10 @@
         title: {},
         note: "",
         platform: [],
-        ruler: { span: 0, scale: [], marks: [] },
+        list: { rows: [], window: 30 },
         fetchedAt: 0,
         arriveAt: 0,
+        leaveIn: null,
         watching: [],
         alerts: [],
         checkedAt: 0,
@@ -1166,9 +1235,10 @@
         return element;
       };
 
-      // The station list column is minutes only ("3"); the ruler labels carry the
-      // unit ("3m"). BRD, ARR and "--" pass through untouched.
-      const bareMin = (wait) => wait.replace(/m$/, "");
+      // The minute column carries its own unit as a smaller glyph, so the wait is
+      // split rather than trimmed: "~23m" -> ["~23", "m"]. BRD, ARR and "--" have
+      // no unit to split off and pass through whole.
+      const splitMin = (wait) => (wait.endsWith("m") ? [wait.slice(0, -1), "m"] : [wait, ""]);
 
       // A line's name is its colour, so the alert card needs no second table.
       const lineName = (code) => {
@@ -1176,76 +1246,110 @@
         return color ? color[0].toUpperCase() + color.slice(1) : code;
       };
 
-      function renderRuler() {
-        const { marks, scale } = state.ruler;
-        el("ruler").hidden = marks.length === 0;
-        const track = [node("div", "axis")];
-        // One tick per scale label. The last sits a pixel in so it is not clipped.
-        scale.forEach((_, i) => {
-          const tick = node("div", "tick");
-          const pct = (i / (scale.length - 1)) * 100;
-          tick.style.left = i === scale.length - 1 ? "calc(100% - 1px)" : `${pct}%`;
-          track.push(tick);
-        });
-        for (const mark of marks) {
-          const pin = node("div", `pin ${mark.mine ? "mine" : "other"}${mark.lift ? " lift" : ""}`);
-          pin.style.left = `${mark.pct}%`;
-          const lab = node("div", mark.now ? "lab now" : "lab");
-          if (mark.mine) {
-            lab.textContent = mark.wait;
-            pin.append(lab, node("div", "sub", mark.line), node("div", "stem"));
-          } else {
-            // Two lines: the line code over the wait, as tight as 10px caps allow.
-            lab.append(document.createTextNode(mark.line), document.createElement("br"), document.createTextNode(mark.wait));
-            pin.append(node("div", "stem"), lab);
-          }
-          track.push(pin);
+      // "leave in 1m", and at zero the word rather than "0m".
+      const leaveLabel = () => (state.leaveIn === 0 ? "leave now" : `leave in ${state.leaveIn}m`);
+
+      // The wall-clock time a train leaves: its minute against the stamp the feed
+      // was read at, never against the local clock, so the whole board ages as one
+      // reading rather than drifting a minute apart from its own timestamp.
+      const departsAt = (train) =>
+        state.fetchedAt && Number.isFinite(train.eta) ? clock(state.fetchedAt + train.eta * 60_000) : "";
+
+      // The verdict line under a row: the whole of what the hero used to say, on the
+      // one train it was ever about, so the two cannot be read apart or drift apart.
+      // Mint for the train you are being sent for, one step dark for the one the
+      // walk has already taken - "gone" is not a signal, it is a regret.
+      function answerRow(train) {
+        if (!(state.config.walkMin > 0)) return null;
+        const row = node("tr", train.target ? "answer" : "answer past");
+        const cell = document.createElement("td");
+        cell.colSpan = 4;
+        if (train.target) {
+          cell.append(leaveLabel());
+          // The arrival is a scheduled average, so it keeps its tilde here exactly
+          // as it did in the hero.
+          if (state.arriveAt) cell.append(node("span", "tail", ` · arrive ~${clock(state.arriveAt)}`));
+        } else {
+          cell.append("gone");
+          // How far short, because dim ink alone does not say why a 3-minute train
+          // is out of reach when the walk is 5.
+          const short = state.config.walkMin - train.eta;
+          if (Number.isFinite(short) && short > 0) cell.append(node("span", "tail", ` · ${short} min short`));
         }
-        // A dropped label below the line needs the room, and only then.
-        el("track").classList.toggle("deep", marks.some((mark) => !mark.mine && mark.lift));
-        el("track").replaceChildren(...track);
-        el("scale").replaceChildren(...scale.map((text) => node("span", "", text)));
+        // The empty first cell keeps the line under the terminus rather than under
+        // the minute, so it reads as belonging to the train and not to the column.
+        row.append(document.createElement("td"), cell);
+        return row;
+      }
+
+      // The header names the trip, or the app when there is no trip yet - the setup
+      // form is the one screen where the app's own name is the only thing to say.
+      function renderTrip() {
+        const { from, to } = state.config;
+        const trip = el("trip");
+        if (from && to) {
+          trip.replaceChildren(from, node("span", "sep", " → "), to);
+        } else {
+          trip.replaceChildren("Train", node("span", "sep", "·"), "Menu");
+        }
       }
 
       function renderFeed() {
-        const trains = state.platform;
-        el("feed").hidden = trains.length === 0;
-        el("feedCount").textContent = `${state.config.from ?? ""} · trains`;
+        const { rows: trains } = state.list;
+        // No window claim: a row kept past the horizon - the last train of the
+        // night - would make one a lie, and the stamp already dates the board.
+        el("feedCount").textContent = "Departures";
+        // The live pip is a claim that the platform sign is speaking. On a board
+        // carrying nothing but timetable rows it would be claiming too much.
+        el("feedLive").hidden = !trains.some((train) => train.source !== "sched");
         el("feedStamp").textContent = state.fetchedAt ? clock(state.fetchedAt, true) : "";
 
-        // Group is 1 or 2 and its meaning is per-station, so it is only ever used
-        // to split the two directions apart - never to name a platform.
-        const mineGroup = trains.find((train) => train.mine)?.group;
-        // Within a direction, the trains that serve the trip come first: they are
-        // the ones in full ink, and the answer should not need hunting for.
-        const ordered = (group) => [...group.filter((t) => t.mine), ...group.filter((t) => !t.mine)];
-        const groups = mineGroup
-          ? [
-              ["", ordered(trains.filter((train) => train.group === mineGroup))],
-              ["Opposite direction", ordered(trains.filter((train) => train.group !== mineGroup))],
-            ]
-          : [["", trains]];
         const rows = [];
-        for (const [label, group] of groups) {
-          if (!group.length) continue;
-          if (label) {
-            const head = node("tr", "group");
-            const cell = node("td", "", label);
-            cell.colSpan = 3;
-            head.append(cell);
-            rows.push(head);
-          }
-          for (const train of group) {
-            const row = node("tr", train.mine ? "" : "dim");
-            row.append(
-              node("td", "c-min", bareMin(train.wait)),
-              node("td", "c-ln", train.line),
-              node("td", "", train.terminus),
-            );
-            rows.push(row);
-          }
+        for (const train of trains) {
+          // "gone" and "leave in" are decided in the main process, on the one list
+          // all three surfaces read - the row never re-derives them.
+          const verdict = state.config.walkMin > 0 && (train.target || train.missed);
+          const kind = train.target ? "go" : train.missed ? "missed" : train.mine ? "" : "other";
+          const row = node("tr", `${kind}${train.source === "sched" ? " sched" : ""}${verdict ? " said" : ""}`.trim());
+          const [value, unit] = splitMin(train.wait);
+          const min = node("td", "c-min", value);
+          if (unit) min.append(node("span", "u", unit));
+          const dot = node("td", "c-dot");
+          const bullet = node("span", "dot");
+          if (LINE_COLOR[train.line]) bullet.dataset.color = LINE_COLOR[train.line];
+          dot.append(bullet);
+          // One column, one meaning, every row: when this train leaves.
+          row.append(
+            min,
+            dot,
+            node("td", "c-ln", train.line),
+            node("td", "c-to", train.terminus),
+            node("td", "c-clock", departsAt(train)),
+          );
+          rows.push(row);
+          if (verdict) rows.push(answerRow(train));
+        }
+        // A quiet platform is honest but it looks broken, so the reason goes in the
+        // list rather than leaving an empty box to be interpreted.
+        if (!rows.length) {
+          const quiet = node("tr", "quiet");
+          const cell = node("td", "", state.note || (state.error ? "no departures - the feed did not answer" : "no departures"));
+          cell.colSpan = 5;
+          quiet.append(cell);
+          rows.push(quiet);
         }
         el("feedRows").replaceChildren(...rows);
+
+        // The walk, named once, under the trains it applies to. With no walk set
+        // there is nothing to name, so the line falls back to what the list holds.
+        const mine = trains.filter((train) => train.mine).length;
+        const to = state.config.to ?? "your stop";
+        el("feedMine").textContent =
+          state.config.walkMin > 0
+            ? `${state.config.walkMin} min walk to ${to}`
+            : mine
+              ? `${mine} to ${to}`
+              : "none to your stop";
       }
 
       function renderAlerts() {
@@ -1295,17 +1399,9 @@
         // Also the revert path: leaving Settings without saving drops the live
         // preview back to whatever is actually on disk.
         applyBrightness(state.config.brightness ?? DEFAULT_BRIGHTNESS);
-        const next = state.platform.find((train) => train.mine);
-        el("heroMins").textContent = state.title.mins || "--";
-        el("heroCode").textContent = state.title.line ?? "";
-        el("heroDot").dataset.color = state.title.color ?? "";
-        // The note is why the board is empty, when it is, and stands in for the
-        // destination rather than landing in the wait column.
-        el("heroToward").textContent = state.note || next?.terminus || "";
-        // A tilde, always: RailTime is a scheduled average, not a promise.
-        el("heroArrive").textContent = state.arriveAt ? `arrive ~${clock(state.arriveAt)}` : "";
-        el("route").textContent = [state.config.from, state.config.to].filter(Boolean).join("  →  ");
-        renderRuler();
+        applyTextPx(state.config.textPx ?? DEFAULT_TEXT_PX);
+        applyOpacity(state.config.opacity ?? DEFAULT_OPACITY);
+        renderTrip();
         renderFeed();
         renderAlerts();
         setStatus(state.stale ? "stale" : "", "warn");
@@ -1325,8 +1421,13 @@
         el("apiKey").value = state.config.apiKey ?? "";
         pickedStyle = state.config.style ?? "dot";
         renderStyles();
+        el("walkMin").value = state.config.walkMin ?? 0;
         el("brightness").value = state.config.brightness ?? DEFAULT_BRIGHTNESS;
+        el("textPx").value = state.config.textPx ?? DEFAULT_TEXT_PX;
+        el("opacity").value = state.config.opacity ?? DEFAULT_OPACITY;
         paintBrightness();
+        paintTextPx();
+        paintOpacity();
         setStatus("", "");
         hint.textContent = "";
 
@@ -1377,7 +1478,12 @@
           // No refreshSec: 30s is the only interval now, and normalizeConfig
           // defaults the missing field. Faster than that is the refresh button.
           style: pickedStyle,
+          // A blank field is 0, which is the off value - normalizeConfig clamps
+          // the rest, so a pasted "999" cannot shadow the whole feed.
+          walkMin: Number(el("walkMin").value),
           brightness: Number(el("brightness").value),
+          textPx: Number(el("textPx").value),
+          opacity: Number(el("opacity").value),
         });
         show("board");
       }
@@ -1388,6 +1494,8 @@
       });
 
       el("brightness").addEventListener("input", paintBrightness);
+      el("textPx").addEventListener("input", paintTextPx);
+      el("opacity").addEventListener("input", paintOpacity);
 
       el("doRefresh").addEventListener("click", () => window.trainMenu.refresh());
       el("doSettings").addEventListener("click", () => show(mode === "setup" ? "board" : "setup"));

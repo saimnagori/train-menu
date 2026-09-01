@@ -10,12 +10,15 @@
 // are going. Rosslyn sends Orange, Blue and Silver toward DC, and Silver alternates
 // between Largo and New Carrollton, so filtering on line would put you on the wrong
 // train. jPath resolves it: see `serves`.
-import { readFile, writeFile, mkdir } from "node:fs/promises";
+import { execFile } from "node:child_process";
+import { access, readFile, writeFile, mkdir } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
+import { promisify } from "node:util";
 import { pathToFileURL } from "node:url";
 import { alertsForLines, normalizeIncidents } from "../shared/alerts.js";
-import { KIND_ALERTS, KIND_DEPARTURES, PAYLOAD_VERSION } from "../shared/parse.js";
+import { extractTrips, nextScheduled, parseCsv } from "../shared/gtfs.js";
+import { KIND_ALERTS, KIND_DEPARTURES, KIND_SCHEDULE, PAYLOAD_VERSION } from "../shared/parse.js";
 import { listStations, matchStation, normalizeStations, resolveCodes } from "../shared/stations.js";
 
 const API = "https://api.wmata.com";
@@ -24,8 +27,12 @@ const API = "https://api.wmata.com";
 const STATIONS_TTL_MS = 30 * 24 * 60 * 60 * 1000;
 const HTTP_TIMEOUT_MS = 10_000;
 
-const cacheFile = () =>
-  join(process.env.TRAIN_MENU_CACHE || join(homedir(), ".cache"), "train-menu-wmata.json");
+const cacheDir = () => process.env.TRAIN_MENU_CACHE || join(homedir(), ".cache");
+const cacheFile = () => join(cacheDir(), "train-menu-wmata.json");
+// Its own file, deliberately: the schedule run and a departure refresh are separate
+// processes, and two of them read-modify-writing one whole-file JSON is a lost update.
+const scheduleFile = () => join(cacheDir(), "train-menu-schedule.json");
+const gtfsZip = () => join(cacheDir(), "train-menu-gtfs.zip");
 
 async function fetchJson(path, params) {
   const url = new URL(API + path);
@@ -177,9 +184,9 @@ function terminusCodes(list, train) {
 // feed (protobuf, so a parser dependency) or the static GTFS timetable as a filler.
 /**
  * Every revenue train the feed names at these platforms, each flagged `mine`
- * when it actually serves the destination. The station list shows all of them
- * and the ruler draws all of them, so the filter is a flag rather than a drop -
- * the wrong-branch train below the axis is the whole point of the ruler.
+ * when it actually serves the destination. The board shows all of them at your
+ * platform, so the filter is a flag rather than a drop - the half-lit wrong-branch
+ * row is what answers "is anything moving at all".
  */
 export async function platformTrains(cache, originCodes, destCodes, list) {
   const { Trains } = await http(`/StationPrediction.svc/json/GetPrediction/${originCodes.join(",")}`);
@@ -261,15 +268,153 @@ export function payload({ trains, destination, fetchedAt, minsToArrival }) {
     // registered Orange-only yet Silver trains run there, so intersecting the
     // stations would hide a real Silver alert.
     lines: [...new Set(trains.filter((t) => t.mine).map((t) => t.line))].sort(),
-    platform: trains.map(({ wait, eta, line, group, terminus, mine }) => ({
+    platform: trains.map(({ wait, eta, line, group, terminus, mine, source }) => ({
       wait,
       eta,
       line,
       group,
       terminus,
       mine,
+      // "live" for a train the prediction feed named, "sched" for one only the
+      // static timetable knows about. The popover never styles the two alike.
+      source: source ?? "live",
     })),
   };
+}
+
+// --- the static timetable: its own run, its own 12 hour timer ---
+
+const GTFS_URL = `${API}/gtfs/rail-gtfs-static.zip`;
+// 3.65 MB over whatever network the laptop is on. Nothing waits for this.
+const GTFS_TIMEOUT_MS = 90_000;
+// Four of the ten members. shapes.txt alone is 7.3 MB and is never read.
+const UNZIP = "/usr/bin/unzip";
+const execFileAsync = promisify(execFile);
+
+// `unzip -p` one member to stdout. Info-ZIP ships with macOS and the app is
+// mac-only, so this costs no dependency in a process spawned every 30 seconds.
+const member = async (zip, name) => {
+  const { stdout } = await execFileAsync(UNZIP, ["-p", zip, name], { maxBuffer: 1 << 28, encoding: "utf8" });
+  return stdout;
+};
+
+async function readJson(file) {
+  try {
+    return JSON.parse(await readFile(file, "utf8"));
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Download (or reuse) the feed and extract just this station pair's timetable.
+ * Returns the cache object, which is also what gets written to disk.
+ *
+ * If-Modified-Since means most refreshes are a 304 and no bytes at all; a 304 for
+ * the pair we already extracted skips the extraction too.
+ */
+export async function buildSchedule(from, to) {
+  const cache = await loadCache();
+  const list = await stationList(cache);
+  const originCodes = resolveCodes(list, from);
+  const destCodes = resolveCodes(list, to);
+  const zip = gtfsZip();
+  const prev = await readJson(scheduleFile());
+  // Only send If-Modified-Since when the zip a 304 would send us back to is still
+  // on disk - otherwise a 304 leaves nothing to extract from.
+  const haveZip = Boolean(prev?.lastModified) && (await access(zip).then(() => true, () => false));
+
+  const res = await fetch(GTFS_URL, {
+    headers: {
+      api_key: process.env.WMATA_API_KEY ?? "",
+      ...(haveZip ? { "If-Modified-Since": prev.lastModified } : {}),
+    },
+    signal: AbortSignal.timeout(GTFS_TIMEOUT_MS),
+  });
+  let lastModified = prev?.lastModified ?? "";
+  if (res.status === 304) {
+    // Same feed and same trip as last time: there is nothing left to compute.
+    if (prev?.from === from && prev?.to === to) return prev;
+  } else {
+    if (!res.ok) throw new Error(res.status === 401 ? "WMATA rejected the API key" : `WMATA HTTP ${res.status}`);
+    await mkdir(dirname(zip), { recursive: true });
+    await writeFile(zip, Buffer.from(await res.arrayBuffer()));
+    lastModified = res.headers.get("last-modified") ?? "";
+  }
+
+  const [stops, trips, stopTimes, calendar] = await Promise.all([
+    member(zip, "stops.txt"),
+    member(zip, "trips.txt"),
+    member(zip, "stop_times.txt"),
+    member(zip, "calendar_dates.txt"),
+  ]);
+  // stops.txt and trips.txt quote fields containing a comma; stop_times.txt does
+  // not, and is 352k rows, so it is handed over raw for a plain split.
+  const schedule = {
+    v: PAYLOAD_VERSION,
+    from,
+    to,
+    lastModified,
+    refreshedAt: Date.now(),
+    dates: parseCsv(calendar).map((row) => ({
+      service_id: row.service_id,
+      date: row.date,
+      exception_type: row.exception_type,
+    })),
+    trips: extractTrips(
+      { stops: parseCsv(stops), trips: parseCsv(trips), stopTimes },
+      originCodes,
+      destCodes,
+      list,
+    ),
+  };
+  await writeFile(scheduleFile(), JSON.stringify(schedule));
+  return schedule;
+}
+
+/**
+ * The extracted timetable for this trip, or null. Every degradation is silent and
+ * total: no file, a contract from another version, or a cache built for a different
+ * station pair all mean the board is exactly what it was before this feature.
+ */
+export async function loadSchedule(from, to) {
+  const schedule = await readJson(scheduleFile());
+  if (schedule?.v !== PAYLOAD_VERSION) return null;
+  if (schedule.from !== from || schedule.to !== to) return null;
+  return schedule;
+}
+
+// At most this many scheduled rows. Enough to fill the board's 30 minute window at
+// a rush hour headway; past that the board drops them anyway, so a larger cap only
+// buys rows nobody sees. The old ruler took two, because two marks were all its
+// axis had room for - a list has no such limit.
+const SCHED_ROWS = 6;
+
+/**
+ * The scheduled departures past the live window, as extra `mine` rows.
+ *
+ * Scheduled rows are mine-only on purpose: a scheduled wrong-branch train is noise
+ * on a board you read to catch a specific train. Live rows still show every train.
+ *
+ * Where the two sources overlap the prediction feed wins, because it is the more
+ * accurate one and it is what the platform sign is showing. nextScheduled owns that
+ * rule; everything here does is hand it the live board to apply it against.
+ */
+async function scheduledTail(cache, trains, from, to) {
+  // GTFS track numbers are not WMATA's prediction Group, so the group is learned
+  // from the live feed instead: whenever a train of ours is seen, remember which
+  // side of the platform it was on. Only used to file scheduled rows under the
+  // right direction in the station list.
+  const groups = (cache.mineGroup ??= {});
+  const key = `${from}>${to}`;
+  const live = trains.find((t) => t.mine && t.group);
+  if (live && groups[key] !== live.group) {
+    groups[key] = live.group;
+    dirty = true;
+  }
+  const schedule = await loadSchedule(from, to);
+  if (!schedule) return [];
+  return nextScheduled({ ...schedule, group: groups[key] ?? "" }, trains, new Date(), SCHED_ROWS);
 }
 
 // The alerts run: its own invocation on its own 5 minute timer, so a failure here
@@ -281,7 +426,26 @@ export async function alerts(lines) {
 
 const print = (value) => process.stdout.write(`${JSON.stringify(value)}\n`);
 
-async function main([from, to]) {
+async function main([from, to, dest]) {
+  // The static timetable, invoked on its own 12 hour timer:
+  //   node src/departures/index.js --schedule Rosslyn "New Carrollton"
+  // Nothing waits for it - it leaves a cache file behind, and the next departure
+  // refresh picks it up if it is there.
+  if (from === "--schedule") {
+    if (!process.env.WMATA_API_KEY) throw new Error("No WMATA API key - add one in Settings");
+    if (!to || !dest) throw new Error("usage: departures.js --schedule <boarding station> <destination station>");
+    const schedule = await buildSchedule(to, dest);
+    const trips = Object.values(schedule.trips).reduce((n, list) => n + list.length, 0);
+    print({
+      v: PAYLOAD_VERSION,
+      kind: KIND_SCHEDULE,
+      from: schedule.from,
+      to: schedule.to,
+      trips,
+      refreshedAt: schedule.refreshedAt,
+    });
+    return;
+  }
   // Regenerate the bundled station list: `WMATA_API_KEY=... node src/departures/index.js --stations > src/shared/stations.json`
   if (from === "--stations") {
     if (!process.env.WMATA_API_KEY) throw new Error("WMATA_API_KEY is required to fetch the station list");
@@ -316,10 +480,14 @@ async function main([from, to]) {
   if (dirty) await saveCache(cache);
   const trains = await platformTrains(cache, originCodes, destCodes, list);
   const fetchedAt = Date.now();
+  trains.push(...(await scheduledTail(cache, trains, from, to)));
   const [next] = trains.filter((t) => t.mine);
   // One cached call per station pair, ever - and only once a train exists to
-  // count from, so an empty board spends nothing.
-  const ride = next && Number.isFinite(next.eta) ? await railTime(cache, next.at, destCodes) : null;
+  // count from, so an empty board spends nothing. A scheduled train carries no
+  // platform code of its own, so the ride is measured from a live one at the same
+  // station, or from the first origin platform when the feed named nothing.
+  const rideFrom = next?.at ?? trains.find((t) => t.at)?.at ?? originCodes[0];
+  const ride = next && Number.isFinite(next.eta) ? await railTime(cache, rideFrom, destCodes) : null;
   if (dirty) await saveCache(cache);
   print(payload({
     trains,

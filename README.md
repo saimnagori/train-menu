@@ -1,113 +1,31 @@
 # Train Menu
 
-Next train home, in the macOS menu bar. Pick a boarding station and a destination,
-and the menu bar shows the wait for the next train that actually stops where you
-are going.
+Next train home, in the macOS menu bar. Pick a boarding station and a destination;
+the menu bar shows the wait for the next train that actually stops where you are
+going.
 
 ```
 OR · 4m
 ```
 
-Click for a popover with the following departures, one row per line + destination
-with the next two waits.
+Click and the popover is the departure list: one row per train leaving your
+platform in the next 30 minutes, soonest first, live and scheduled in one column
+of minutes, with rail incidents for your lines underneath.
 
-## Why it is not just "filter by line"
+**The walk shadow.** Set how many minutes you are from the platform and the app
+answers "do I need to move" instead of "what is the next train". Trains inside
+the shadow are flagged as missed, never dropped - whether you sprint is your
+call - and the menu bar switches to the wait for the first train you can actually
+catch. `0` (default) turns the whole thing off.
 
-A WMATA prediction tells you a train's *terminus*, not whether it stops at your
-destination. Rosslyn sends Orange, Blue and Silver toward DC; Silver alternates
-between Largo and New Carrollton. Filtering on line puts you on the wrong train.
+**Past the live window.** The prediction feed names about three trains per
+platform group, so with a walk set the board could go quiet with nothing to say.
+WMATA's GTFS *static* timetable fills that stretch: scheduled rows carry a tilde
+on the minute (`~14m`) and a lighter ink, and are mine-only. Same list, same
+order, no second table.
 
-`serves()` resolves it with the `jPath` endpoint: fetch the station sequence for
-`origin -> terminus`, keep the train only if your destination appears *later* in
-that sequence than where you are standing. Track geometry never changes, so paths
-are cached permanently.
-
-Same-line trips only. A trip needing a transfer is reported as unsupported rather
-than shown as an empty board forever.
-
-## How it works
-
-```
-tray icon ──> app.js ──(execFile, every 30s)──> departures/index.js ──> api.wmata.com
-   │             │                                            │
-   │             │  <────────────── stdout ───────────────────┘
-   │             │
-   └── popover.html <──(IPC "state")── snapshot()
-```
-
-`src/main/app.js` is the Electron main process: tray, popover window, config, and
-a timer that shells out for fresh departures. It knows nothing about trains.
-
-`src/departures/index.js` is a standalone Node script that talks to WMATA and
-prints the board. Run it on its own:
-
-```sh
-WMATA_API_KEY=... node src/departures/index.js Rosslyn "New Carrollton"
-```
-```json
-{
-  "v": 1,
-  "title": { "line": "OR", "mins": "4m" },
-  "fetchedAt": 1787855160006,
-  "arriveAt": 1787857500006,
-  "lines": ["OR", "SV"],
-  "platform": [
-    { "wait": "4m", "eta": 4, "line": "OR", "group": "1", "terminus": "New Carrollton", "mine": true },
-    { "wait": "6m", "eta": 6, "line": "BL", "group": "1", "terminus": "Downtown Largo", "mine": false }
-  ]
-}
-```
-
-The two halves are joined only by that stdout format - the **script contract** in
-`src/shared/parse.js`: one versioned JSON object, `title` for the menu bar and
-`platform` for the popover, one row per revenue train at the station flagged
-`mine` when it actually serves the trip. Every field is coerced on the way in.
-Point `TRAIN_MENU_SCRIPT` at your own script (dev builds only) and this becomes a
-menu bar for any transit agency, or anything else that prints a wait and a label.
-
-Rail incidents are a second, separate invocation on a 5 minute timer, filtered to
-the lines the last payload said carry the trip. A failure there can neither break
-nor delay a departure refresh:
-
-```sh
-WMATA_API_KEY=... node src/departures/index.js --alerts OR,SV
-```
-
-The script is spawned per refresh rather than kept resident: a hung network call
-is killed by `SIGKILL` at 15s and cannot wedge the UI, and a crash costs one tick.
-Stations go in argv; the API key goes in the env, because argv is visible to any
-local `ps`.
-
-### State
-
-Every refresh publishes a snapshot to the popover. A failure keeps the last known
-departures visible and marks them stale (`4m?`) rather than blanking the menu bar
-on a transient blip. Refresh is reachable from six places (timer, tray click,
-manual refresh, config save, wake-from-sleep, startup), so each run carries a
-generation token - a superseded run drops its result instead of overwriting fresh
-data.
-
-### Files
-
-| Path | |
-|---|---|
-| `src/main/app.js` | tray, popover, scheduler, IPC |
-| `src/main/config.js` | config read/write, input clamping |
-| `src/main/bounds.js` | popover placement under the tray icon |
-| `src/departures/index.js` | WMATA client, predictions and incidents |
-| `src/shared/parse.js` | the script contract |
-| `src/shared/ruler.js` | minute-ruler placement |
-| `src/shared/alerts.js` | incident parsing, line filter, relative age |
-| `src/shared/stations.js` | station name/code matching |
-| `src/shared/stations.json` | bundled station list, so setup works with no key |
-| `src/renderer/popover.html` | the popover, one file |
-| `src/preload/index.cjs` | the IPC surface exposed to the renderer |
-
-Two files on disk, both under `~/Library/Application Support/train-menu/`:
-
-- `config.json` - stations, menu bar style, API key. Written `0600`, atomically.
-- `train-menu-wmata.json` - cached station list (30-day TTL), path sequences
-  and station-pair ride times. Safe to delete; it refills.
+The popover also tunes menu bar style, brightness, text size (12-16px) and
+background opacity.
 
 ## Setup
 
@@ -122,15 +40,94 @@ pnpm dist:mac        # ad-hoc signed .app + .dmg in release/
 pnpm stations        # regenerate the bundled station list (needs a key)
 ```
 
-Departures refresh every 30s, incidents every 5 minutes. Neither is configurable:
-30s is comfortably above the 15s script timeout, so the timer alone can never
-overlap two fetches, and a shorter interval would only spend API calls on a feed
-that updates about that often anyway. The popover's refresh button fetches now.
+## Why not just "filter by line"
+
+A prediction gives a train's *terminus*, not whether it stops at your
+destination - Rosslyn sends OR/BL/SV toward DC, and SV alternates between Largo
+and New Carrollton. `serves()` fetches the station sequence for
+`origin -> terminus` from the `jPath` endpoint and keeps the train only if your
+destination appears later in that sequence. Track geometry never changes, so
+paths are cached permanently.
+
+Same-line trips only; a trip needing a transfer is reported as unsupported.
+
+## How it works
+
+```
+tray icon ──> app.js ──(execFile, every 30s)──> departures/index.js ──> api.wmata.com
+   │             │                                            │
+   │             │  <────────────── stdout ───────────────────┘
+   │             │
+   └── popover.html <──(IPC "state")── snapshot()
+```
+
+`src/main/app.js` is the Electron main process - tray, popover, config, refresh
+timer. It knows nothing about trains. `src/departures/index.js` is a standalone
+Node script that talks to WMATA and prints the board:
+
+```sh
+WMATA_API_KEY=... node src/departures/index.js Rosslyn "New Carrollton"
+WMATA_API_KEY=... node src/departures/index.js --alerts OR,SV   # incidents, 5m timer
+WMATA_API_KEY=... node src/departures/index.js --schedule Rosslyn "New Carrollton"
+```
+
+The two halves are joined only by that stdout format - the **script contract** in
+`src/shared/parse.js`: one versioned JSON object, `title` for the menu bar,
+`platform` for the popover, one row per revenue train flagged `mine` when it
+serves the trip and `source` `live` or `sched`. Every field is coerced on the way
+in. Point
+`TRAIN_MENU_SCRIPT` at your own script (dev builds only) and this becomes a menu
+bar for any agency.
+
+Design notes worth knowing:
+
+- Spawned per refresh, not resident: `SIGKILL` at 15s, so a hung call cannot
+  wedge the UI and a crash costs one tick. Stations go in argv, the key in env
+  (argv is visible to local `ps`).
+- A failed refresh keeps the last departures and marks them stale (`4m?`) instead
+  of blanking. Refresh has six triggers, so each run carries a generation token
+  and a superseded run drops its result.
+- 30s / 5m intervals are fixed: 30s is above the 15s timeout, so the timer can
+  never overlap two fetches. The popover's refresh button fetches now.
+- `--schedule` is a third invocation on a 12 hour timer, fully off the departure
+  path: it downloads the 3.65 MB GTFS zip (`If-Modified-Since`, so most runs are
+  a 304), extracts four members with `/usr/bin/unzip`, and leaves a cache file
+  the next departure refresh reads. Every failure there is silent and the board
+  is exactly what it was without the feature.
+
+### Files
+
+| Path | |
+|---|---|
+| `src/main/app.js` | tray, popover, scheduler, IPC |
+| `src/main/config.js`, `bounds.js` | config + input clamping, popover placement |
+| `src/departures/index.js` | WMATA client - predictions, incidents, GTFS download |
+| `src/shared/parse.js` | the script contract |
+| `src/shared/board.js` | which departures the list draws, in what order |
+| `src/shared/alerts.js` | incident parsing, line filter, relative age |
+| `src/shared/walk.js`, `gtfs.js` | walk shadow, static timetable past the live window |
+| `src/shared/stations.js`, `stations.json` | name matching, bundled list (works with no key) |
+| `src/renderer/popover.html` | the popover, one file |
+| `src/preload/index.cjs` | the IPC surface exposed to the renderer |
+
+State on disk, under `~/Library/Application Support/train-menu/`:
+
+- `config.json` - stations, walk minutes, menu bar style, brightness, text size,
+  opacity, API key. `0600`, written atomically.
+- `train-menu-wmata.json` - cached station list (30-day TTL), path sequences,
+  ride times.
+- `train-menu-schedule.json` + `train-menu-gtfs.zip` - the extracted timetable
+  for the current trip, and the feed it came from. Own file on purpose: the
+  schedule run and a departure refresh are separate processes.
+
+All three caches are safe to delete; they refill.
 
 ## Limits
 
 - macOS only, arm64, ad-hoc signed (no notarization - expect a Gatekeeper prompt).
-- WMATA rail only.
-- Same-line trips only, no transfers.
-- The prediction feed returns ~3 trains per platform group, so a second wait for
-  your route often is not there. A longer horizon needs the GTFS-realtime feed.
+- WMATA rail only. Same-line trips only, no transfers.
+- The prediction feed returns ~3 trains per platform group. Past those the board
+  is the *published* timetable, not realtime - a scheduled row can be wrong by
+  whatever the service is doing. GTFS-realtime would close the gap.
+- A walk longer than every train the feed names turns the shadow off for that
+  refresh: the board falls back to reporting the next train.

@@ -31,7 +31,22 @@ assert.deepEqual(board.title, { mins: "3m", line: "OR", color: "orange" });
 assert.equal(board.fetchedAt, PAYLOAD.fetchedAt);
 assert.equal(board.arriveAt, PAYLOAD.arriveAt);
 assert.deepEqual(board.lines, ["OR", "SV"]);
-assert.deepEqual(board.platform, PAYLOAD.platform);
+assert.deepEqual(board.platform, PAYLOAD.platform.map((train) => ({ ...train, source: "live" })));
+// Where a row came from is part of the contract: a train the prediction feed named
+// and a row filled in from the static timetable must never render alike, so an
+// absent `source` reads as live and anything unrecognised is coerced to live rather
+// than trusted into the renderer.
+const sourced = parsePayload(
+  JSON.stringify({
+    ...PAYLOAD,
+    platform: [
+      { ...PAYLOAD.platform[0], source: "sched" },
+      { ...PAYLOAD.platform[1], source: "gtfs-rt" },
+      { ...PAYLOAD.platform[2], source: 7 },
+    ],
+  }),
+);
+assert.deepEqual(sourced.platform.map((train) => train.source), ["sched", "live", "live"]);
 
 // Exit 0 with nothing (or with prose) on stdout is a failure, not "no trains" -
 // treating it as success blanks the menu bar and says nothing. An empty board is
@@ -70,8 +85,8 @@ assert.deepEqual(junk.title, { mins: "4m", line: "", color: "" });
 assert.equal(junk.fetchedAt, 0, "an unusable stamp reads as absent, not as NaN");
 assert.deepEqual(junk.lines, ["OR"]);
 assert.deepEqual(junk.platform, [
-  { wait: "", eta: null, line: "OR", group: "", terminus: "", mine: true },
-  { wait: "", eta: null, line: "", group: "", terminus: "", mine: false },
+  { wait: "", eta: null, line: "OR", group: "", terminus: "", mine: true, source: "live" },
+  { wait: "", eta: null, line: "", group: "", terminus: "", mine: false, source: "live" },
 ]);
 assert.deepEqual(parsePayload(JSON.stringify({ ...PAYLOAD, platform: "all of them" })).platform, []);
 
@@ -99,7 +114,16 @@ assert.equal(colorOf(undefined), "");
 console.log("ok");
 
 // --- config ---
-import { normalizeConfig, isConfigured, DEFAULT_REFRESH_SEC, MIN_REFRESH_SEC, MAX_REFRESH_SEC, DEFAULT_BRIGHTNESS } from "../src/main/config.js";
+import {
+  normalizeConfig,
+  isConfigured,
+  DEFAULT_REFRESH_SEC,
+  MIN_REFRESH_SEC,
+  MAX_REFRESH_SEC,
+  DEFAULT_BRIGHTNESS,
+  DEFAULT_OPACITY,
+  DEFAULT_TEXT_PX,
+} from "../src/main/config.js";
 import { DEFAULT_TRAY_STYLE } from "../src/main/tray-image.js";
 
 assert.deepEqual(normalizeConfig({ from: " Central ", to: "Airport", refreshSec: "45", apiKey: " k " }), {
@@ -109,6 +133,9 @@ assert.deepEqual(normalizeConfig({ from: " Central ", to: "Airport", refreshSec:
   refreshSec: 45,
   style: DEFAULT_TRAY_STYLE,
   brightness: DEFAULT_BRIGHTNESS,
+  walkMin: 0,
+  textPx: DEFAULT_TEXT_PX,
+  opacity: DEFAULT_OPACITY,
 });
 // The menu bar style comes from the same hand-editable file: an unknown value
 // would render no readout at all, so it falls back instead.

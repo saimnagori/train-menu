@@ -5,7 +5,7 @@ import { chmod, mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { parsePayload } from "../src/shared/parse.js";
-import { rulerModel } from "../src/shared/ruler.js";
+import { boardList } from "../src/shared/board.js";
 import { listStations, matchStation, normalizeStations, resolveCodes } from "../src/shared/stations.js";
 import {
   alerts,
@@ -165,10 +165,10 @@ assert.deepEqual(
   "null-code trains kept and named; Largo, westbound and non-revenue dropped",
 );
 
-// The station list and the ruler show every train at the platform, so the filter
-// is a flag rather than a drop - the wrong-branch Silver to Largo and the
-// westbound Orange to Vienna are what the greyed rows and the marks below the
-// axis are made of. Non-revenue trains are still dropped: they carry no passengers.
+// The board shows every train at the platform, so the filter is a flag rather
+// than a drop - the wrong-branch Silver to Largo is what the half-lit rows are
+// made of, and the westbound Orange to Vienna is what the hidden count is.
+// Non-revenue trains are still dropped: they carry no passengers.
 const board = await platformTrains(warm, ["C05"], ["D13"], list);
 assert.deepEqual(
   board.map((t) => [t.wait, t.line, t.terminus, t.group, t.mine]),
@@ -268,11 +268,14 @@ assert.deepEqual(out.platform[0], {
   group: "1",
   terminus: "New Carrollton",
   mine: true,
+  source: "live",
 });
 // Nothing the user rejected may reach the renderer, whatever the feed carries:
-// no car count, no fare, no platform or track number.
+// no car count, no fare, no platform or track number. `at` is the origin platform
+// code the ride time is measured from - working data, not the popover's.
 for (const train of out.platform) {
-  assert.deepEqual(Object.keys(train).sort(), ["eta", "group", "line", "mine", "terminus", "wait"]);
+  assert.deepEqual(Object.keys(train).sort(), ["eta", "group", "line", "mine", "source", "terminus", "wait"]);
+  assert.equal(train.source, "live", "every train the prediction feed named says so");
 }
 
 // An empty board must not parse as a departure - "no trains to X" in the wait
@@ -290,19 +293,16 @@ assert.deepEqual(nothing.lines, [], "with no trains, no line is watched for aler
 const junk = payload({ trains: board, destination: "X", fetchedAt: FETCHED, minsToArrival: null });
 assert.equal(junk.arriveAt, 0);
 
-// The ruler reads the payload straight, so the round trip is what it draws: the
-// two New Carrollton trains above the axis, the Largo and Vienna trains below.
-const drawn = rulerModel(out.platform);
-assert.equal(drawn.span, 10, "the axis ends at the last train the feed named, rounded up to the next 5");
-assert.deepEqual(drawn.scale, ["now", "5m", "10m"]);
+// The board reads the payload straight, so the round trip is what it draws: the
+// trains that reach New Carrollton, by the minute, and nothing else - not the
+// westbound Orange, and not the Silver leaving this platform for somewhere else.
+const drawn = boardList(out.platform);
 assert.deepEqual(
-  drawn.marks.map((m) => [m.wait, m.mine, m.pct]),
+  drawn.rows.map((row) => [row.wait, row.line, row.mine]),
   [
-    ["BRD", true, 0],
-    ["2m", false, 20],
-    ["4m", false, 40],
-    ["6m", true, 60],
-    ["9m", true, 90],
+    ["BRD", "OR", true],
+    ["6m", "SV", true],
+    ["9m", "OR", true],
   ],
 );
 
